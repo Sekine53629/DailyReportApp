@@ -1,0 +1,2520 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>くるむ薬局 札幌店 業務日報</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
+<style>
+/* ============================================================
+   トークン ― 明暗どちらでも同じ役割で解決するよう、色は必ずここ経由
+   ============================================================ */
+:root{
+  --ground:#f4f7f5;
+  --surface:#ffffff;
+  --surface-2:#eef2f0;
+  --line:#dae2de;
+  --line-strong:#c3cec9;
+  --ink:#16211d;
+  --ink-2:#41514b;
+  --muted:#6b7c75;
+  --accent:#0f766e;
+  --accent-ink:#ffffff;
+  --accent-soft:#d7ece8;
+  --ok:#15803d;      --ok-soft:#dcf0e2;
+  --warn:#b45309;    --warn-soft:#fbeed8;
+  --crit:#b91c1c;    --crit-soft:#fbe0de;
+  --info:#1d4ed8;    --info-soft:#dee6fb;
+  --shadow:0 1px 2px rgba(22,33,29,.06), 0 8px 24px -12px rgba(22,33,29,.18);
+  --r:12px;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:"Zen Kaku Gothic New",-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  --body:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0e1614;
+    --surface:#16211e;
+    --surface-2:#1d2926;
+    --line:#2a3733;
+    --line-strong:#3b4a45;
+    --ink:#e7efeb;
+    --ink-2:#b8c7c1;
+    --muted:#8b9c95;
+    --accent:#2dd4bf;
+    --accent-ink:#08201d;
+    --accent-soft:#123330;
+    --ok:#4ade80;      --ok-soft:#12301f;
+    --warn:#fbbf24;    --warn-soft:#33260c;
+    --crit:#f87171;    --crit-soft:#361715;
+    --info:#93b4fd;    --info-soft:#152340;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0e1614;
+  --surface:#16211e;
+  --surface-2:#1d2926;
+  --line:#2a3733;
+  --line-strong:#3b4a45;
+  --ink:#e7efeb;
+  --ink-2:#b8c7c1;
+  --muted:#8b9c95;
+  --accent:#2dd4bf;
+  --accent-ink:#08201d;
+  --accent-soft:#123330;
+  --ok:#4ade80;      --ok-soft:#12301f;
+  --warn:#fbbf24;    --warn-soft:#33260c;
+  --crit:#f87171;    --crit-soft:#361715;
+  --info:#93b4fd;    --info-soft:#152340;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:15px;
+  line-height:1.6;
+  -webkit-text-size-adjust:100%;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
+
+/* ============================================================
+   骨格 ― スマホは1カラム、PCは「週の状況 / 入力」の2カラム
+   ============================================================ */
+.shell{max-width:1040px;margin:0 auto;padding:0 14px 40px}
+
+.topbar{
+  /* sticky なので、中の .pickme はこのバーを基準に置ける */
+  position:sticky;top:0;z-index:20;
+  background:color-mix(in srgb, var(--ground) 86%, transparent);
+  backdrop-filter:saturate(1.4) blur(8px);
+  border-bottom:1px solid var(--line);
+  margin:0 -14px 16px;padding:10px 14px;
+  display:flex;align-items:center;gap:10px;
+}
+.brand{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.brand b{font-family:var(--disp);font-weight:700;font-size:15px;letter-spacing:.01em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand span{font-size:11px;color:var(--muted);letter-spacing:.06em}
+.topbar .grow{flex:1}
+
+.who{
+  display:flex;align-items:center;gap:6px;flex:0 0 auto;
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  padding:4px 6px 4px 12px;box-shadow:var(--shadow);
+}
+.who label{font-size:11px;color:var(--muted);letter-spacing:.04em}
+.who select{border:0;background:transparent;font-size:13px;font-weight:600;padding:2px 4px;
+  max-width:8.5em;cursor:pointer}
+/* Googleアカウントで本人確認しているとき ― 選べないことが信頼の根拠なので、静的に出す */
+.who.signed{padding:4px 14px;flex-direction:column;align-items:flex-start;line-height:1.25}
+.who.signed .nm{font-size:13px;font-weight:700;white-space:nowrap}
+.who.signed .em{font-family:var(--mono);font-size:9.5px;color:var(--muted);
+  max-width:11em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.who.unknown{border-color:color-mix(in srgb,var(--crit) 45%,transparent);background:var(--crit-soft)}
+.who.unknown .nm{color:var(--crit)}
+/* 担当者が未選択のとき。押印の名前が決まらないので、ここを促す */
+.who.need{border-color:var(--warn);background:var(--warn-soft);animation:nudge .45s ease}
+.who.need select{color:var(--warn)}
+@keyframes nudge{
+  0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)}
+}
+.pickme[hidden]{display:none}
+.pickme{
+  position:absolute;top:100%;right:74px;margin-top:6px;z-index:40;
+  display:flex;align-items:center;gap:6px;max-width:min(19em,calc(100vw - 24px));
+  padding:8px 12px;border-radius:10px;
+  background:var(--ink);color:var(--surface);font-size:12px;line-height:1.5;
+  box-shadow:0 8px 22px rgba(0,0,0,.22);
+}
+.pickme::before{
+  content:"";position:absolute;top:-5px;right:26px;width:10px;height:10px;
+  background:var(--ink);transform:rotate(45deg);
+}
+@media (max-width:400px){ .pickme{right:12px} }
+@media (max-width:400px){
+  .who label{display:none}
+  .who.signed .em{max-width:8em}
+}
+
+/* 名簿にないアカウントの案内 */
+.blockmsg{
+  display:flex;gap:10px;align-items:flex-start;
+  background:var(--crit-soft);border:1px solid color-mix(in srgb,var(--crit) 30%,transparent);
+  color:var(--crit);border-radius:10px;padding:11px 14px;font-size:12.5px;line-height:1.65;
+  margin-bottom:14px;
+}
+.blockmsg b{display:block;font-family:var(--disp);font-size:13.5px;margin-bottom:2px}
+
+.cols{display:grid;gap:16px}
+@media (min-width:880px){
+  .cols{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);align-items:start}
+  .col-right{position:sticky;top:76px}
+}
+
+/* ============================================================
+   カード
+   ============================================================ */
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--shadow);overflow:hidden;
+}
+.card + .card{margin-top:16px}
+.card-hd{
+  display:flex;align-items:baseline;gap:10px;
+  padding:14px 16px 0;
+}
+.card-hd h2{
+  font-family:var(--disp);font-weight:700;font-size:13px;margin:0;
+  letter-spacing:.08em;color:var(--ink-2);
+}
+.card-hd .note{font-size:11px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.card-bd{padding:14px 16px 16px}
+
+/* ---- 本日の状態(この画面の主役) ---- */
+.today{padding:18px 16px 16px;display:flex;gap:14px;align-items:flex-start}
+.today .dateblock{
+  flex:0 0 auto;text-align:center;padding:8px 12px;border-radius:10px;
+  background:var(--surface-2);border:1px solid var(--line);min-width:72px;
+}
+.today .dateblock .md{font-family:var(--mono);font-size:22px;font-weight:600;
+  letter-spacing:-.02em;display:block;line-height:1.2}
+.today .dateblock .dow{font-size:11px;color:var(--muted);letter-spacing:.1em}
+.today .msg{flex:1;min-width:0}
+.today .msg .state{font-family:var(--disp);font-weight:700;font-size:19px;
+  letter-spacing:.01em;text-wrap:balance;margin:0 0 2px}
+.today .msg .sub{font-size:12.5px;color:var(--muted)}
+.today.is-todo .msg .state{color:var(--warn)}
+.today.is-done .msg .state{color:var(--ok)}
+.today.is-lock .msg .state{color:var(--info)}
+
+/* ---- 状態チップ ---- */
+.chip{
+  display:inline-flex;align-items:center;gap:5px;white-space:nowrap;
+  font-size:11px;font-weight:700;letter-spacing:.04em;
+  padding:2px 9px 2px 7px;border-radius:999px;border:1px solid transparent;
+}
+.chip::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.chip.todo{color:var(--warn);background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 25%,transparent)}
+.chip.done{color:var(--ok);background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 25%,transparent)}
+.chip.lock{color:var(--info);background:var(--info-soft);border-color:color-mix(in srgb,var(--info) 25%,transparent)}
+.chip.appr{color:var(--accent);background:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+.chip.off {color:var(--muted);background:var(--surface-2);border-color:var(--line)}
+.chip.lock::before{animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ---- 週の移動 ---- */
+.weeknav{
+  display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding:8px 16px 10px;border-top:1px solid var(--line);
+}
+.navbtn{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:7px 11px;border-radius:8px;border:1px solid var(--line-strong);
+  background:var(--surface);font:inherit;font-size:12.5px;font-weight:600;color:var(--ink-2);
+  cursor:pointer;transition:background .12s ease,border-color .12s ease,opacity .12s ease;
+}
+.navbtn:hover:not(:disabled){background:var(--surface-2)}
+.navbtn:disabled{opacity:.35;cursor:not-allowed}
+.navbtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.navbtn.now{border-style:dashed}
+.weeknav .jump{display:flex;align-items:center;gap:6px;margin-left:auto}
+.weeknav .jump span{font-size:11px;color:var(--muted);white-space:nowrap}
+.weeknav .jump input{
+  padding:6px 8px;border-radius:8px;border:1px solid var(--line-strong);
+  background:var(--surface);font-family:var(--mono);font-size:12px;color:var(--ink-2);
+}
+@media (max-width:400px){ .weeknav .jump{margin-left:0;width:100%} }
+
+.pastbar[hidden]{display:none}
+.pastbar{
+  display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+  padding:8px 16px;background:var(--info-soft);
+  border-top:1px solid color-mix(in srgb,var(--info) 22%,transparent);
+  font-size:11.5px;color:var(--ink-2);
+}
+
+/* ---- 入力もれ ---- */
+.card-bd.tight{padding:12px 16px 14px}
+.missrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.missrow label{font-size:11.5px;color:var(--muted)}
+.missrow select{
+  padding:7px 9px;border-radius:8px;border:1px solid var(--line-strong);
+  background:var(--surface);font:inherit;font-size:12.5px;color:var(--ink-2);
+}
+.btn.ghost.sm{padding:7px 13px;font-size:12.5px;border-radius:8px}
+.misslist{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.misslist:empty{display:none}
+.missday{
+  display:inline-flex;align-items:baseline;gap:5px;
+  padding:6px 10px;border-radius:8px;border:1px solid var(--line-strong);
+  background:var(--surface);font-family:var(--mono);font-size:12px;font-weight:600;
+  color:var(--ink-2);cursor:pointer;font-variant-numeric:tabular-nums;
+}
+.missday:hover{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.missday .dw{font-family:var(--body);font-size:10.5px;font-weight:500;color:var(--muted)}
+.missday.lock{border-style:dashed;color:var(--info)}
+.missnone{font-size:12px;color:var(--muted);margin-top:10px}
+
+/* ---- 週の一覧(印刷が1週間1ページなので、週が単位) ---- */
+.week{display:flex;flex-direction:column}
+.day{
+  display:grid;grid-template-columns:52px 1fr auto;align-items:center;gap:10px;
+  width:100%;text-align:left;background:transparent;border:0;
+  border-top:1px solid var(--line);padding:10px 16px;cursor:pointer;
+}
+.day:first-child{border-top:0}
+.day:hover{background:var(--surface-2)}
+.day[aria-current="true"]{background:var(--accent-soft)}
+.day[aria-current="true"] .d-date{color:var(--accent)}
+.day:disabled{cursor:default;opacity:.5}
+.d-date{font-family:var(--mono);font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.d-date .dw{font-family:var(--body);font-size:11px;color:var(--muted);margin-left:3px}
+.d-vals{font-family:var(--mono);font-size:12px;color:var(--muted);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.d-vals b{color:var(--ink-2);font-weight:500}
+.d-vals .bad{color:var(--crit);font-weight:600}
+
+/* ---- 入力フォーム ---- */
+.fields{display:grid;gap:12px}
+@media (min-width:420px){ .fields{grid-template-columns:1fr 1fr} }
+.field{display:flex;flex-direction:column;gap:5px}
+.field > label{font-size:12px;font-weight:600;color:var(--ink-2);letter-spacing:.02em}
+.field .hint{font-size:11px;color:var(--muted)}
+.inputwrap{position:relative;display:flex;align-items:center}
+.inputwrap input{
+  width:100%;padding:12px 44px 12px 14px;
+  background:var(--surface);border:1.5px solid var(--line-strong);border-radius:10px;
+  font-family:var(--mono);font-size:19px;font-weight:500;font-variant-numeric:tabular-nums;
+  transition:border-color .12s ease, box-shadow .12s ease;
+}
+.inputwrap input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.inputwrap input:disabled{background:var(--surface-2);color:var(--muted)}
+.inputwrap .unit{position:absolute;right:14px;font-size:13px;color:var(--muted);pointer-events:none}
+.field.out-of-range .inputwrap input{border-color:var(--crit)}
+.field .alarm{font-size:11.5px;font-weight:600;color:var(--crit);display:none}
+.field.out-of-range .alarm{display:block}
+
+/* グループ見出し */
+.grouphd{
+  grid-column:1 / -1;font-family:var(--disp);font-size:11px;font-weight:700;
+  letter-spacing:.12em;color:var(--muted);margin:10px 0 -4px;
+  display:flex;align-items:center;gap:8px;
+}
+.grouphd:first-child{margin-top:0}
+.grouphd::after{content:"";flex:1;height:1px;background:var(--line)}
+
+/* 文字を入れる欄は等幅・大きめをやめて普通の書体に */
+.field.txt .inputwrap input{
+  font-family:var(--body);font-size:15px;font-weight:400;padding:11px 14px;
+}
+.field.txt select{
+  width:100%;padding:11px 14px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:var(--surface);font-size:15px;
+}
+.field.txt select:focus{outline:none;border-color:var(--accent)}
+
+/* 管理に関する事項(譲渡記録) */
+.xfer{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}
+.xfer-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.xfer-hd h3{
+  font-family:var(--disp);font-size:13px;font-weight:700;margin:0;color:var(--ink-2);
+  letter-spacing:.04em;flex:1;min-width:10em;
+}
+.toggle{
+  border:1.5px solid var(--line-strong);background:var(--surface);border-radius:999px;
+  padding:6px 14px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;
+  color:var(--muted);
+}
+.toggle[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.toggle:disabled{opacity:.45;cursor:not-allowed}
+.xfer-note{font-size:11.5px;color:var(--muted);width:100%;line-height:1.6;margin-top:2px}
+.xfer-body{display:grid;gap:12px;margin-top:14px}
+@media (min-width:420px){ .xfer-body{grid-template-columns:1fr 1fr} }
+.xfer-body .wide{grid-column:1 / -1}
+
+/* ---- 押印欄 ---- */
+.seals{display:flex;gap:10px;margin-top:14px}
+.seal{
+  flex:1;border:1px dashed var(--line-strong);border-radius:10px;
+  padding:10px;text-align:center;background:var(--surface-2);
+}
+.seal .cap{font-size:10px;letter-spacing:.1em;color:var(--muted);display:block}
+.seal .stamp{width:42px;height:42px;object-fit:contain;display:block;margin:4px auto 2px}
+.seal .name{font-family:var(--disp);font-weight:700;font-size:14px;margin-top:3px;
+  display:block;min-height:1.5em}
+.seal .at{font-family:var(--mono);font-size:10px;color:var(--muted)}
+.seal.filled{border-style:solid;border-color:color-mix(in srgb,var(--crit) 40%,transparent);
+  background:var(--surface)}
+.seal.filled .name{color:var(--crit)}
+/* 印影は入っているが、まだ承認されていない状態 */
+.seal.await{border-style:dashed;border-color:var(--line-strong)}
+.seal.await .name{color:var(--ink-2)}
+.seal.await .stamp{opacity:.55}
+.seal.await .at{color:var(--warn);font-family:var(--body);font-weight:600}
+
+/* ---- ボタン ---- */
+.actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+.btn{
+  flex:1;min-width:130px;padding:13px 18px;border-radius:10px;border:1.5px solid var(--line-strong);
+  background:var(--surface);font-family:var(--disp);font-weight:700;font-size:15px;
+  cursor:pointer;transition:transform .08s ease, background .12s ease, border-color .12s ease;
+}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.ghost{flex:0 0 auto;min-width:0;font-size:13px;padding:10px 14px}
+
+/* ---- 通知バー ---- */
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom));
+  z-index:60;max-width:min(520px,calc(100vw - 28px));
+  padding:11px 16px;border-radius:10px;font-size:13.5px;font-weight:600;
+  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease;
+  background:var(--ink);color:var(--ground);
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.err{background:var(--crit);color:#fff}
+
+.skeleton{height:96px;border-radius:var(--r);background:
+  linear-gradient(90deg,var(--surface-2) 25%,var(--surface) 50%,var(--surface-2) 75%);
+  background-size:400% 100%;animation:sh 1.2s ease infinite}
+@keyframes sh{0%{background-position:100% 0}100%{background-position:0 0}}
+
+.footnote{font-size:11.5px;color:var(--muted);margin:14px 2px 0;line-height:1.7}
+.demo{background:var(--warn-soft);color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
+  border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;margin-bottom:14px}
+.linkbtn{background:none;border:0;padding:0;margin-left:6px;font:inherit;
+  color:inherit;text-decoration:underline;cursor:pointer}
+
+/* ============================================================
+   担当者の管理(モーダル)
+   ============================================================ */
+.iconbtn{
+  flex:0 0 auto;width:36px;height:36px;border-radius:50%;
+  border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);
+  display:grid;place-items:center;cursor:pointer;padding:0;
+}
+.iconbtn svg{width:18px;height:18px;stroke:var(--ink-2);fill:none;stroke-width:1.7}
+.iconbtn:hover{border-color:var(--line-strong)}
+
+.overlay{
+  position:fixed;inset:0;z-index:50;display:none;
+  background:rgba(10,20,17,.45);
+  align-items:flex-end;justify-content:center;
+}
+.overlay.open{display:flex}
+@media (min-width:640px){ .overlay{align-items:center} }
+
+.sheet{
+  background:var(--surface);width:100%;max-width:560px;max-height:88vh;overflow:auto;
+  border-radius:16px 16px 0 0;border:1px solid var(--line);
+  padding-bottom:calc(16px + env(safe-area-inset-bottom));
+}
+@media (min-width:640px){ .sheet{border-radius:16px} }
+
+.sheet-hd{
+  position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);
+  padding:16px 18px 12px;display:flex;align-items:center;gap:10px;
+}
+.sheet-hd h2{font-family:var(--disp);font-weight:700;font-size:16px;margin:0;flex:1}
+.sheet-bd{padding:16px 18px}
+
+/* 名簿の行 */
+.mrow{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:11px 0;border-top:1px solid var(--line);
+}
+.mrow:first-of-type{border-top:0}
+.mrow .mn{font-family:var(--disp);font-weight:700;font-size:14.5px;flex:1;min-width:7em}
+.mrow.retired .mn{color:var(--muted);text-decoration:line-through}
+.mini{
+  border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;
+  padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;
+}
+.mini:hover{border-color:var(--accent)}
+.mini.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.mini.danger{color:var(--crit);border-color:color-mix(in srgb,var(--crit) 35%,transparent)}
+.mini:disabled{opacity:.4;cursor:not-allowed}
+.mrow .cnt{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:100%;
+  order:9;margin-top:-2px}
+
+.addrow{display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:2px solid var(--line)}
+.addrow input{
+  flex:1;min-width:0;padding:11px 13px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:var(--surface);font-size:15px;
+}
+.addrow input:focus{outline:none;border-color:var(--accent)}
+
+/* ---- 印影 ---- */
+.sealbtn{
+  border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;
+  padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:6px;
+  font-size:11.5px;font-weight:700;color:var(--muted);white-space:nowrap;
+}
+.sealbtn:hover{border-color:var(--accent)}
+.sealbtn img{width:26px;height:26px;object-fit:contain;display:block}
+.sealbtn.has{color:var(--ink-2)}
+.sealbtn .no{width:26px;height:26px;border:1px dashed var(--line-strong);border-radius:50%;
+  display:grid;place-items:center;font-size:9px;color:var(--muted)}
+
+.sealedit{padding:4px 0}
+.sealedit h3{font-family:var(--disp);font-size:15px;margin:0 0 4px}
+.sealedit p.lead{font-size:12.5px;color:var(--muted);margin:0 0 16px;line-height:1.7}
+.previews{display:flex;gap:16px;align-items:flex-start;justify-content:center;
+  flex-wrap:wrap;margin-bottom:16px}
+.pv{text-align:center}
+.pv .cap{font-size:10.5px;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:6px}
+.pv .frame{
+  width:112px;height:112px;border:1px solid var(--line);border-radius:10px;
+  display:grid;place-items:center;overflow:hidden;
+  background:
+    linear-gradient(45deg,var(--surface-2) 25%,transparent 25%,transparent 75%,var(--surface-2) 75%),
+    linear-gradient(45deg,var(--surface-2) 25%,transparent 25%,transparent 75%,var(--surface-2) 75%);
+  background-size:12px 12px;background-position:0 0,6px 6px;background-color:var(--surface);
+}
+.pv .frame img,.pv .frame canvas{max-width:100%;max-height:100%;display:block}
+.pv .frame.empty{color:var(--muted);font-size:11px}
+
+.slider{margin:4px 0 16px}
+.slider label{font-size:11.5px;color:var(--muted);display:flex;justify-content:space-between}
+.slider input[type="range"]{width:100%;accent-color:var(--accent);margin-top:4px}
+
+.filepick{
+  display:block;width:100%;text-align:center;padding:13px;border-radius:10px;
+  border:1.5px dashed var(--line-strong);background:var(--surface-2);
+  font-family:var(--disp);font-weight:700;font-size:14px;cursor:pointer;margin-bottom:14px;
+}
+.filepick:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ---- 管理画面のタブ ---- */
+.tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line);
+  position:sticky;top:52px;background:var(--surface);z-index:2}
+.tab{
+  border:0;background:none;padding:9px 12px 8px;cursor:pointer;
+  font-family:var(--disp);font-weight:700;font-size:13px;color:var(--muted);
+  border-bottom:2.5px solid transparent;margin-bottom:-1px;
+}
+.tab[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ---- 現任の管理薬剤師 ---- */
+.chief{
+  display:flex;align-items:center;gap:12px;
+  background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);
+  border-radius:12px;padding:13px 15px;margin-bottom:16px;
+}
+.chief .ttl{font-size:10.5px;letter-spacing:.1em;color:var(--accent);display:block;font-weight:700}
+.chief .nm{font-family:var(--disp);font-weight:700;font-size:17px;display:block;line-height:1.3}
+.chief .sub{font-family:var(--mono);font-size:11px;color:var(--ink-2)}
+.chief.none{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.chief.none .ttl,.chief.none .nm{color:var(--warn)}
+
+/* ---- 任期の一覧 ---- */
+.terms{display:flex;flex-direction:column;margin-bottom:4px}
+.term{display:grid;grid-template-columns:1fr auto;gap:5px 8px;align-items:center;
+  padding:12px 0;border-top:1px solid var(--line)}
+.term:first-child{border-top:0}
+.term .tn{grid-column:1;font-family:var(--disp);font-weight:700;font-size:14.5px}
+.term .chip{grid-column:2;justify-self:end}
+.term .tp{grid-column:1 / -1;font-family:var(--mono);font-size:11.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.term .acts{grid-column:1 / -1;display:flex;gap:8px;margin-top:3px}
+.term.now .tn{color:var(--accent)}
+
+.formrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  margin-top:16px;padding-top:16px;border-top:2px solid var(--line)}
+.formrow select,.formrow input[type="date"]{
+  padding:10px 12px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:var(--surface);font-size:14px;flex:1;min-width:9em;
+}
+.formrow select:focus,.formrow input:focus{outline:none;border-color:var(--accent)}
+.formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
+
+/* ---- 帳票の出力 ---- */
+/* 帳票は横に広いので、この画面だけシートを広く取る */
+#pvOverlay .sheet{max-width:960px}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.range input[type="date"]{
+  flex:1;min-width:8.5em;padding:9px 11px;border:1.5px solid var(--line-strong);
+  border-radius:9px;background:var(--surface);font-size:14px;
+}
+.range input:focus{outline:none;border-color:var(--accent)}
+.range .tilde{color:var(--muted);font-size:13px}
+
+.pvwrap{
+  background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
+  padding:10px;overflow-x:auto;margin-bottom:6px;
+}
+/* シートの実寸で描くため、横に収まらないときは中で横スクロールする */
+.pvwrap table.pv{margin:0 auto}
+table.pv{border-collapse:collapse;table-layout:fixed;font-size:10px}
+table.pv th,table.pv td{border:1px solid #2b3330;padding:2px 4px;vertical-align:middle}
+table.pv th{background:#f4f6f5;font-family:var(--disp);font-size:8.5px;text-align:center;
+  font-weight:700;line-height:1.3}
+table.pv th.subhd{font-weight:400;font-size:7.5px;color:#3d4a45}
+table.pv td.dt{text-align:center;line-height:1.35;font-size:8.5px}
+table.pv td.dt b{display:block;font-size:10px}
+table.pv td.n{text-align:right;font-family:var(--mono);font-size:10.5px}
+table.pv td.u{text-align:left;font-size:7.5px;color:#3d4a45}
+table.pv td.e{text-align:right;font-family:var(--mono);font-size:9.5px;white-space:nowrap}
+table.pv td.e.ng{color:#c42a26;font-weight:700}
+table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
+table.pv td.st{text-align:center;padding:1px}
+table.pv td.st img{width:24px;height:24px;display:block;margin:0 auto}
+table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
+.pvnote{font-size:11px;color:var(--muted);margin:0 0 14px}
+
+.progress{margin:14px 0 4px}
+.progress .bar{height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden}
+.progress .bar i{display:block;height:100%;background:var(--accent);width:0;
+  transition:width .25s ease}
+.progress .txt{font-size:12px;color:var(--muted);margin-top:7px;
+  font-variant-numeric:tabular-nums}
+.donebox{
+  background:var(--ok-soft);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);
+  border-radius:10px;padding:12px 14px;margin-top:14px;
+}
+.donebox b{display:block;font-family:var(--disp);color:var(--ok);font-size:14px;margin-bottom:4px}
+.donebox a{color:var(--accent);font-weight:700;font-size:13px}
+
+/* ---- 変更履歴 ---- */
+.logline{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:12.5px}
+.logline:first-child{border-top:0}
+.logline time{font-family:var(--mono);font-size:10.5px;color:var(--muted);
+  flex:0 0 5.6em;line-height:1.7}
+.logline .lt{flex:1;min-width:0}
+.logline .lt b{font-family:var(--disp);font-size:12.5px;display:block}
+.logline .lt span{color:var(--muted);font-size:11.5px}
+.logempty{color:var(--muted);font-size:12.5px;padding:8px 0}
+
+/* ---- 押印欄の「その日の管理薬剤師」 ---- */
+.seal .pending{color:var(--muted);font-weight:500;font-family:var(--body);font-size:12px}
+.seal .proxy{display:block;font-size:9.5px;color:var(--warn);font-family:var(--body);
+  font-weight:600;margin-top:1px}
+
+.note-block{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+  padding:11px 13px;font-size:12px;color:var(--muted);line-height:1.7;margin-top:16px;
+}
+.note-block b{display:block;color:var(--ink-2);font-family:var(--disp);
+  font-size:12.5px;margin-bottom:3px}
+</style>
+</head>
+<body>
+
+<div class="shell">
+
+  <div class="topbar">
+    <div class="brand">
+      <b id="brandName">くるむ薬局</b>
+      <span>業務日報</span>
+    </div>
+    <div class="grow"></div>
+    <div class="who" id="who"></div>
+    <div class="pickme" id="pickMe" hidden>
+      まず右上で担当者を選んでください。押印する名前が決まりません。
+    </div>
+    <button class="iconbtn" id="btnPrint" title="帳票を出力" aria-label="帳票を出力">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 9V4h10v5"/>
+        <rect x="4" y="9" width="16" height="7" rx="1.5"/>
+        <path d="M7 14h10v6H7z"/>
+      </svg>
+    </button>
+    <button class="iconbtn" id="btnAdmin" title="担当者の管理" aria-label="担当者の管理">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="9" cy="8" r="3.2"/>
+        <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
+        <path d="M17.5 9.5v6M14.5 12.5h6" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="demoBar" class="demo" hidden>
+    プレビュー表示中です。保存や名簿の変更はこの画面の中だけで、シートには書き込まれません。
+    <button class="linkbtn" id="demoToggle">Googleアカウント方式の表示を見る</button>
+  </div>
+
+  <div id="boot"><div class="skeleton"></div></div>
+
+  <div class="cols" id="main" hidden>
+
+    <div class="col-left">
+      <!-- 本日の状態 -->
+      <div class="card">
+        <div class="today" id="todayCard">
+          <div class="dateblock">
+            <span class="md" id="tMd">–</span>
+            <span class="dow" id="tDow">–</span>
+          </div>
+          <div class="msg">
+            <p class="state" id="tState">読み込み中</p>
+            <div class="sub" id="tSub"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 週の一覧(前後の週へ移動できます) -->
+      <div class="card">
+        <div class="card-hd">
+          <h2 id="weekTitle">今週</h2>
+          <span class="note" id="weekRange"></span>
+        </div>
+
+        <div class="weeknav">
+          <button class="navbtn" id="wkPrev" title="前の週へ" aria-label="前の週へ">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>
+            <span>前の週</span>
+          </button>
+          <button class="navbtn" id="wkNext" title="次の週へ" aria-label="次の週へ">
+            <span>次の週</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>
+          </button>
+          <button class="navbtn now" id="wkNow">今週</button>
+          <label class="jump" for="wkJump">
+            <span>日付から</span>
+            <input type="date" id="wkJump">
+          </label>
+        </div>
+
+        <div class="pastbar" id="pastBar" hidden>
+          <span id="pastMsg"></span>
+          <button class="linkbtn" id="pastBack">今週へ戻る</button>
+        </div>
+
+        <div class="week" id="week"></div>
+      </div>
+
+      <!-- 入力もれ -->
+      <div class="card">
+        <div class="card-hd">
+          <h2>入力もれ</h2>
+          <span class="note" id="missNote"></span>
+        </div>
+        <div class="card-bd tight">
+          <div class="missrow">
+            <label for="missSpan">さかのぼる範囲</label>
+            <select id="missSpan">
+              <option value="14">2週間</option>
+              <option value="30" selected>1か月</option>
+              <option value="90">3か月</option>
+              <option value="180">半年</option>
+            </select>
+            <button class="btn ghost sm" id="missScan">探す</button>
+          </div>
+          <div class="misslist" id="missList"></div>
+        </div>
+      </div>
+
+      <p class="footnote">
+        印刷用の記録簿は1ページが1週間分です。この一覧の並びがそのまま用紙の行になります。
+      </p>
+    </div>
+
+    <div class="col-right">
+      <!-- 入力 -->
+      <div class="card">
+        <div class="card-hd">
+          <h2 id="formTitle">入力</h2>
+          <span class="note" id="formState"></span>
+        </div>
+        <div class="card-bd">
+
+          <div id="blockArea"></div>
+          <div class="fields" id="fields"></div>
+          <div class="xfer" id="xfer"></div>
+
+          <div class="seals">
+            <div class="seal" id="sealStaff">
+              <span class="cap">担当者印</span>
+              <span class="name">—</span>
+              <span class="at"></span>
+            </div>
+            <div class="seal" id="sealAdmin">
+              <span class="cap">管理者印</span>
+              <span class="name">—</span>
+              <span class="at"></span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="btnSave">保存する</button>
+            <button class="btn ghost" id="btnEdit" hidden>修正する</button>
+            <button class="btn ghost" id="btnApprove" hidden>承認する</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <h2 id="sheetTitle">名簿と管理薬剤師</h2>
+      <button class="mini" id="sheetClose">閉じる</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="staff"  aria-selected="true">担当者</button>
+      <button class="tab" role="tab" data-tab="chief"  aria-selected="false">管理薬剤師</button>
+      <button class="tab" role="tab" data-tab="log"    aria-selected="false">変更履歴</button>
+    </div>
+    <div class="sheet-bd" id="sheetBody"></div>
+  </div>
+</div>
+
+<div class="overlay" id="pvOverlay" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <h2 id="pvTitle">帳票の出力</h2>
+      <button class="mini" id="pvClose">閉じる</button>
+    </div>
+    <div class="sheet-bd" id="pvBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ============================================================
+   入力項目の定義。サーバー側(DBシートの列)と1対1で対応させる。
+   ============================================================ */
+var FIELDS = [
+  // ―― 業務量 ――
+  { key:'rx',        label:'処方箋枚数',   unit:'枚', step:'1',   min:0,  max:999, decimals:0,
+    group:'業務量' },
+  { key:'inquiry',   label:'疑義照会',     unit:'件', step:'1',   min:0,  max:99,  decimals:0,
+    group:'業務量' },
+
+  // ―― 温湿度(帳票の「調剤室 温度/湿度」「冷所 温度/湿度」に対応) ――
+  { key:'roomTemp',  label:'調剤室 温度',  unit:'℃', step:'0.1', min:-10, max:50,  decimals:1,
+    group:'温湿度', range:[1,30],
+    alarm:'室温の管理基準 1〜30℃ を外れています。' },
+  { key:'roomHumid', label:'調剤室 湿度',  unit:'%',  step:'1',   min:0,   max:100, decimals:0,
+    group:'温湿度', range:[30,70],
+    alarm:'管理基準 30〜70% を外れています。' },
+  { key:'coldTemp',  label:'冷所 温度',    unit:'℃', step:'0.1', min:-10, max:30,  decimals:1,
+    group:'温湿度', range:[2,8],
+    alarm:'冷所の管理基準 2〜8℃ を外れています。庫内の医薬品を確認してください。' },
+  { key:'coldHumid', label:'冷所 湿度',    unit:'%',  step:'1',   min:0,   max:100, decimals:0,
+    group:'温湿度' }
+];
+
+/* 帳票の「管理に関する事項」欄。譲渡・譲受があった日だけ記入します。
+   サブ見出しの並び(譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/
+   包装形態/譲渡数/Lot/使用期限)と順番を合わせてあります。 */
+var XFER = [
+  { key:'xKind',    label:'譲渡区分',           type:'select', choices:['譲渡','譲受'] },
+  { key:'xPartner', label:'譲渡先名 / 譲受元名', type:'text' },
+  { key:'xMaker',   label:'販売メーカー名称',    type:'text' },
+  { key:'xDrug',    label:'医薬品名称',          type:'text', wide:true },
+  { key:'xPack',    label:'包装形態',           type:'text' },
+  { key:'xQty',     label:'譲渡数',             type:'text' },
+  { key:'xLot',     label:'Lot',                type:'text' },
+  { key:'xExpiry',  label:'使用期限',           type:'month' }
+];
+
+var IS_GAS = (typeof google !== 'undefined' && google.script && google.script.run);
+var S = { week:null, sel:null, me:null, staff:[], isAdmin:false, dirty:false,
+          todayDay:null, navBusy:false, missSpan:30 };
+
+/* ---------- サーバー呼び出し(GASでもプレビューでも同じ形で使う) ---------- */
+function call(fn, args, ok, ng){
+  if (IS_GAS){
+    google.script.run.withSuccessHandler(ok).withFailureHandler(ng || fail)[fn].apply(null, args||[]);
+  } else {
+    setTimeout(function(){ try{ ok(MOCK[fn].apply(null, args||[])); }catch(e){ (ng||fail)(e); } }, 180);
+  }
+}
+function fail(e){ toast((e && e.message) || 'サーバーとの通信に失敗しました', true); }
+
+/* ---------- 起動 ---------- */
+function boot(){
+  if (!IS_GAS) document.getElementById('demoBar').hidden = false;
+  call('getWeekState', [null], function(d){
+    S.staff = d.staff;                       // [{id,name,active,records}]
+    S.terms = d.terms || [];                 // [{id,staffId,name,from}] 管理薬剤師の任期
+    S.auth = d.auth || { mode:'select' };
+    S.me = decideMe(d);
+    document.getElementById('brandName').textContent = d.store;
+    renderIdentity();
+    apply(d);
+    document.getElementById('boot').hidden = true;
+    document.getElementById('main').hidden = false;
+    scanMissing();
+  });
+}
+
+/* ---------- 名簿の小道具 ---------- */
+function activeStaff(){
+  return S.staff.filter(function(s){ return s.active; });
+}
+function staffByName(n){
+  var f = S.staff.filter(function(s){ return s.name === n; });
+  return f.length ? f[0] : null;
+}
+/* ---------- 管理薬剤師(任期テーブルから引く) ----------
+   管理薬剤師は各時点で1名。任期は開始日だけを持ち、
+   終了日は「次の任期の前日」として導出する。
+   こうしておけば、日付を直しても期間が食い違わない。 */
+function adminOn(dateStr){
+  var hit = null;
+  (S.terms || []).forEach(function(t){
+    if (t.from <= dateStr && (!hit || t.from > hit.from)) hit = t;
+  });
+  return hit ? hit.name : '';
+}
+function currentAdminName(){ return adminOn(S.week ? S.week.today : '9999-12-31'); }
+
+/* 承認できるのは、その日の管理薬剤師か、現任の管理薬剤師(代行) */
+function canApprove(dateStr){
+  if (!S.me) return false;
+  return S.me === adminOn(dateStr) || S.me === currentAdminName();
+}
+
+/* 誰として記録するかを決める。
+   select … 名簿から選ぶ(共用端末向け。既定)
+   google … Googleアカウントで確定(本人が選び直せないので押印の根拠が強い) */
+/* 共用端末で開くので、前の人の名前が残っていると
+   そのまま別人の名前で押印・ロックしてしまう。
+   だから select のときは必ず空欄から始める。 */
+function decideMe(d){
+  if (S.auth.mode === 'google') return S.auth.registered ? S.auth.name : '';
+  return '';
+}
+
+/* 名簿にないGoogleアカウントは記録させない。ここを緩めると押印が意味を失う */
+function isBlocked(){ return S.auth.mode === 'google' && !S.auth.registered; }
+
+function apply(d){
+  S.week = d;
+  // 過去の週を見ているあいだも「本日の状態」は today のまま出したいので、
+  // 今日を含む週を読んだときだけ控えを取っておく
+  if (weekHas(d.today)) S.todayDay = dayOf(d.today);
+  if (!S.sel || !weekHas(S.sel)) S.sel = defaultSel(d);
+  renderToday();
+  renderWeek();
+  renderForm();
+}
+
+/** いま表示している週にその日が入っているか */
+function weekHas(dateStr){
+  if (!S.week) return false;
+  return S.week.days.some(function(d){ return d.date === dateStr; });
+}
+
+/** 週を開いたときに最初に選ぶ日
+ *  今週なら今日。過去の週なら、いちばん手前の未入力の日(なければ最終日) */
+function defaultSel(d){
+  var past = d.days.filter(function(x){ return x.date <= d.today; });
+  if (!past.length) return d.days[0].date;
+  for (var i=0;i<past.length;i++) if (past[i].date === d.today) return d.today;
+  for (var j=0;j<past.length;j++) if (past[j].state === 'empty') return past[j].date;
+  return past[past.length-1].date;
+}
+
+/* ---------- 担当者の表示 ---------- */
+function renderIdentity(){
+  var box = document.getElementById('who');
+
+  if (S.auth.mode === 'google'){
+    var known = S.auth.registered;
+    box.className = 'who signed' + (known ? '' : ' unknown');
+    box.innerHTML = '<span class="nm">' + esc(known ? S.auth.name : '名簿にありません') + '</span>'
+                  + '<span class="em">' + esc(S.auth.email) + '</span>';
+    return;
+  }
+
+  box.className = 'who' + (S.me ? '' : ' need');
+  box.innerHTML = '<label for="me">担当</label><select id="me"></select>';
+  var sel = document.getElementById('me');
+  sel.innerHTML = '<option value="">選んでください</option>'
+    + activeStaff().map(function(s){
+        return '<option'+(s.name===S.me?' selected':'')+'>'+esc(s.name)+'</option>';
+      }).join('');
+  sel.value = S.me || '';
+  sel.addEventListener('change', function(){
+    // 入力の途中で名前を選んだときに、打った値が消えないよう控えておく
+    var keep = S.dirty ? formSnapshot_() : null;
+    S.me = sel.value;
+    if (S.me) clearNeedStaff();
+    renderForm();
+    formRestore_(keep);
+    // 名前が決まってから「入力中」を立てる(空欄のまま他人をロックしないため)
+    if (S.me && S.dirty) claimOnce_();
+  });
+}
+
+/* ---------- 本日カード ---------- */
+function renderToday(){
+  var d = S.todayDay || dayOf(S.week.today);
+  var card = document.getElementById('todayCard');
+  document.getElementById('tMd').textContent  = d.date.slice(5).replace('-','/');
+  document.getElementById('tDow').textContent = d.dow;
+
+  var state = document.getElementById('tState');
+  var sub   = document.getElementById('tSub');
+  card.className = 'today';
+
+  if (d.state === 'empty'){
+    card.classList.add('is-todo');
+    state.textContent = '本日はまだ入力されていません';
+    sub.textContent = '退勤前に、温度・湿度と枚数を入力してください。';
+  } else if (d.state === 'editing'){
+    card.classList.add('is-lock');
+    state.textContent = d.lockedBy + ' さんが入力中です';
+    sub.textContent = '同じ日を二重に登録しないよう、いまは他の人が開いています。';
+  } else if (d.state === 'approved'){
+    card.classList.add('is-done');
+    state.textContent = '本日は入力・承認まで完了しています';
+    sub.textContent = '担当 ' + d.staff + ' / 承認 ' + d.admin;
+  } else {
+    card.classList.add('is-done');
+    state.textContent = '本日は入力済みです';
+    sub.textContent = '担当 ' + d.staff + ' が ' + d.savedAt + ' に入力。'
+      + (canApprove(d.date) ? '管理薬剤師の承認をお願いします。' : '管理薬剤師の承認待ちです。');
+  }
+}
+
+/* ---------- 週の移動 ----------
+   週の始まりの決め方はサーバー(CFG.WEEK_START)に任せてある。
+   画面は「その日を含む週」を頼むか、いまの週から±7日ずらすだけ。 */
+function gotoWeek(anchor, wantSel){
+  if (S.navBusy) return;
+  if (S.dirty && !confirm('入力中の内容が保存されていません。移動しますか？')) return;
+  S.dirty = false;
+  S.editing = false;
+  release_(S.sel);
+  S.navBusy = true;
+  setNavDisabled(true);
+  call('getWeekState', [anchor || null], function(d){
+    S.navBusy = false;
+    S.sel = (wantSel && d.days.some(function(x){ return x.date === wantSel; })) ? wantSel : null;
+    apply(d);
+  }, function(e){
+    S.navBusy = false; setNavDisabled(false); fail(e);
+  });
+}
+
+/** その日へ移動する。同じ週の中なら読み直さない */
+function gotoDate(dateStr){
+  if (weekHas(dateStr)){ selectDay(dateStr); return; }
+  gotoWeek(dateStr, dateStr);
+}
+
+function selectDay(dateStr){
+  if (dateStr === S.sel) return;
+  if (S.dirty && !confirm('入力中の内容が保存されていません。移動しますか？')) return;
+  S.dirty = false;
+  S.editing = false;
+  release_(S.sel);
+  S.sel = dateStr;
+  renderWeek(); renderForm();
+}
+
+function setNavDisabled(on){
+  ['wkPrev','wkNext','wkNow','wkJump'].forEach(function(id){
+    document.getElementById(id).disabled = on;
+  });
+}
+
+/** iso から今日までの日数 */
+function weeksAgoOf(startIso, todayIso){
+  var a = startIso.split('-'), b = todayIso.split('-');
+  var d1 = new Date(+a[0], +a[1]-1, +a[2]), d2 = new Date(+b[0], +b[1]-1, +b[2]);
+  return Math.floor(Math.round((d2 - d1) / 86400000) / 7);
+}
+
+/* ---------- 週の一覧 ---------- */
+function renderWeek(){
+  var w = S.week;
+  var isNow = weekHas(w.today);
+
+  document.getElementById('weekTitle').textContent = isNow ? '今週' : '過去の週';
+  document.getElementById('weekRange').textContent =
+    w.days[0].date.replace(/-/g,'/') + ' – ' + w.days[6].date.slice(5).replace('-','/');
+
+  setNavDisabled(false);
+  document.getElementById('wkNext').disabled = isNow;
+  document.getElementById('wkNow').disabled = isNow;   // 今週を見ているときは押す必要がない
+  document.getElementById('wkNow').setAttribute('aria-current', isNow ? 'true' : 'false');
+
+  var jump = document.getElementById('wkJump');
+  jump.max = w.today;
+  jump.value = (S.sel && S.sel <= w.today) ? S.sel : w.days[0].date;
+
+  var bar = document.getElementById('pastBar');
+  bar.hidden = isNow;
+  if (!isNow){
+    var n = weeksAgoOf(w.days[0].date, w.today);
+    document.getElementById('pastMsg').textContent =
+      n + '週間前の記録です。入力し忘れた日はここから入れられます。';
+  }
+
+  document.getElementById('week').innerHTML = w.days.map(function(d){
+    var future = d.date > w.today;
+    return '<button class="day" data-date="'+d.date+'"'
+      + (d.date === S.sel ? ' aria-current="true"' : '')
+      + (future ? ' disabled' : '') + '>'
+      + '<span class="d-date">'+d.date.slice(8)+'<span class="dw">'+d.dow+'</span></span>'
+      + '<span class="d-vals">'+valSummary(d, future)+'</span>'
+      + stateChip(d, future)
+      + '</button>';
+  }).join('');
+
+  Array.prototype.forEach.call(document.querySelectorAll('.day'), function(el){
+    el.addEventListener('click', function(){ selectDay(el.getAttribute('data-date')); });
+  });
+}
+
+function valSummary(d, future){
+  if (future) return '';
+  if (d.state === 'empty' || d.state === 'editing') return '';
+  var cls = function(key){
+    var f = FIELDS.filter(function(x){ return x.key === key; })[0];
+    if (!f || !f.range || d[key] === null) return '';
+    return (d[key] < f.range[0] || d[key] > f.range[1]) ? 'bad' : '';
+  };
+  return '<b>' + d.rx + '枚</b> · <b>' + d.inquiry + '件</b> · '
+       + '室<b class="' + cls('roomTemp') + '">' + fmt(d.roomTemp,1) + '</b>/'
+       + '<b class="' + cls('roomHumid') + '">' + fmt(d.roomHumid,0) + '</b> · '
+       + '冷<b class="' + cls('coldTemp') + '">' + fmt(d.coldTemp,1) + '</b>/'
+       + '<b class="' + cls('coldHumid') + '">' + fmt(d.coldHumid,0) + '</b>'
+       + (d.xDrug ? ' · <b>譲渡</b>' : '');
+}
+
+function stateChip(d, future){
+  if (future)                  return '<span class="chip off">—</span>';
+  if (d.state === 'approved')  return '<span class="chip appr">承認済</span>';
+  if (d.state === 'saved')     return '<span class="chip done">入力済</span>';
+  if (d.state === 'editing')   return '<span class="chip lock">入力中</span>';
+  return '<span class="chip todo">未入力</span>';
+}
+
+/* ---------- 入力フォーム ---------- */
+function renderForm(){
+  var d = dayOf(S.sel);
+  var blocked = isBlocked();
+  var locked = (d.state === 'editing' && d.lockedBy !== S.me);
+  var saved  = (d.state === 'saved' || d.state === 'approved');
+  var ro     = blocked || locked || (saved && !S.editing);
+
+  document.getElementById('blockArea').innerHTML = blocked
+    ? '<div class="blockmsg"><div><b>このアカウントでは記録できません</b>'
+      + esc(S.auth.email) + ' は担当者名簿に登録されていません。'
+      + '管理者に登録を依頼するか、勤務用のアカウントで開き直してください。</div></div>'
+    : '';
+
+  document.getElementById('formTitle').textContent =
+    d.date.slice(5).replace('-','/') + '(' + d.dow + ')の記録';
+  document.getElementById('formState').innerHTML = stateChip(d, false);
+
+  // 数値欄。グループ見出しを挟みながら並べる
+  var lastGroup = '';
+  document.getElementById('fields').innerHTML = FIELDS.map(function(f){
+    var head = (f.group && f.group !== lastGroup)
+      ? '<div class="grouphd">' + esc(f.group) + '</div>' : '';
+    lastGroup = f.group || lastGroup;
+    var v = (d[f.key] === null || d[f.key] === undefined) ? '' : d[f.key];
+    return head
+      + '<div class="field" data-key="'+f.key+'">'
+      + '<label for="in_'+f.key+'">'+esc(f.label)+'</label>'
+      + '<div class="inputwrap">'
+      +   '<input id="in_'+f.key+'" type="number" inputmode="'
+      +   (f.decimals ? 'decimal' : 'numeric')+'" step="'+f.step+'" min="'+f.min+'" max="'+f.max+'"'
+      +   ' value="'+v+'"'+(ro ? ' disabled' : '')+'>'
+      +   '<span class="unit">'+f.unit+'</span>'
+      + '</div>'
+      + (f.range ? '<div class="alarm">'+esc(f.alarm||'')+'</div>' : '')
+      + '</div>';
+  }).join('');
+
+  FIELDS.forEach(function(f){
+    var el = document.getElementById('in_'+f.key);
+    el.addEventListener('input', function(){
+      S.dirty = true; checkRange(f);
+      if (!S.me) needStaff(false); else claimOnce_();
+    });
+    checkRange(f);
+  });
+
+  renderXfer_(d, ro);
+
+  // 押印欄。管理者印は、その日の管理薬剤師が誰だったかを常に示す
+  seal('sealStaff', d.staff, d.savedAt);
+  sealAdmin_(d);
+
+  // ボタン
+  var save = document.getElementById('btnSave');
+  var edit = document.getElementById('btnEdit');
+  var appr = document.getElementById('btnApprove');
+
+  save.hidden = ro;
+  save.textContent = saved ? '上書き保存' : '保存する';
+  save.disabled = false;
+  edit.hidden = !(saved && !S.editing) || locked || blocked;
+  appr.hidden = !(canApprove(d.date) && d.state === 'saved') || blocked;
+
+  if (locked || blocked){ save.hidden = true; edit.hidden = true; }
+}
+
+/* 名簿から印影画像を引く */
+function sealUrlOf(name){
+  var s = staffByName(name);
+  return (s && s.sealUrl) ? s.sealUrl : '';
+}
+function stampImg_(name){
+  var u = sealUrlOf(name);
+  return u ? '<img class="stamp" src="' + u + '" alt="' + esc(name) + ' の印">' : '';
+}
+
+/* 入力を始めた時点で「入力中」を立て、他の人に見えるようにする。
+   応答で画面を作り直すとフォーカスが外れるので、投げっぱなしにする。 */
+/* ---------- 担当者が未選択のときの促し ----------
+   ここが空のまま入力を始めると、誰の名前で押印するか決まらない。
+   勝手に先頭の人を選んでしまうと、その人の名前でロックがかかって
+   あとから外せずに困るので、必ず本人に選ばせる。 */
+var pickTimer;
+function needStaff(focus){
+  if (S.auth.mode === 'google') return;      // アカウントで確定しているときは出さない
+  var box = document.getElementById('who');
+  var pop = document.getElementById('pickMe');
+  box.classList.remove('need');
+  void box.offsetWidth;                      // アニメーションを鳴らし直す
+  box.classList.add('need');
+  pop.hidden = false;
+  clearTimeout(pickTimer);
+  pickTimer = setTimeout(clearNeedStaff, 7000);
+  if (focus){
+    var sel = document.getElementById('me');
+    if (sel) sel.focus();
+  }
+}
+function clearNeedStaff(){
+  clearTimeout(pickTimer);
+  document.getElementById('pickMe').hidden = true;
+  document.getElementById('who').classList.remove('need');
+}
+
+function claimOnce_(){
+  var d = dayOf(S.sel);
+  if (S.claimed === S.sel || d.state !== 'empty' || !S.me) return;
+  S.claimed = S.sel;
+  call('claimDay', [{ date:S.sel, staff:S.me }], function(){}, function(){});
+}
+function release_(date){
+  if (S.claimed !== date || !S.me) return;
+  S.claimed = null;
+  call('releaseDay', [{ date:date, staff:S.me }], function(){}, function(){});
+}
+
+/* 管理に関する事項(譲渡記録)。
+   譲渡があった日だけ書く欄なので、既定は閉じておき、
+   「記載あり」を押したときだけ入力欄を出します。 */
+function renderXfer_(d, ro){
+  var has = XFER.some(function(f){ return d[f.key]; });
+  if (S.xferOpen === undefined || S.xferDate !== d.date){
+    S.xferOpen = has;
+    S.xferDate = d.date;
+  }
+
+  var body = XFER.map(function(f){
+    var v = d[f.key] == null ? '' : String(d[f.key]);
+    var input;
+    if (f.type === 'select'){
+      input = '<select id="in_'+f.key+'"'+(ro?' disabled':'')+'>'
+            + '<option value=""></option>'
+            + f.choices.map(function(c){
+                return '<option'+(c===v?' selected':'')+'>'+esc(c)+'</option>'; }).join('')
+            + '</select>';
+    } else {
+      input = '<div class="inputwrap"><input id="in_'+f.key+'" type="'
+            + (f.type === 'month' ? 'month' : 'text') + '" value="'+esc(v)+'"'
+            + (ro?' disabled':'') + '></div>';
+    }
+    return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+      + '<label for="in_'+f.key+'">'+esc(f.label)+'</label>' + input + '</div>';
+  }).join('');
+
+  document.getElementById('xfer').innerHTML =
+      '<div class="xfer-hd">'
+    +   '<h3>管理に関する事項</h3>'
+    +   '<button class="toggle" id="xferToggle" aria-pressed="'+(S.xferOpen?'true':'false')+'"'
+    +     (ro?' disabled':'') + '>' + (S.xferOpen ? '記載あり' : '記載なし') + '</button>'
+    +   '<div class="xfer-note">医薬品の譲渡・譲受があった日だけ記入します。'
+    +     '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</div>'
+    + '</div>'
+    + '<div class="xfer-body" id="xferBody"' + (S.xferOpen ? '' : ' hidden') + '>' + body + '</div>';
+
+  var btn = document.getElementById('xferToggle');
+  if (btn) btn.addEventListener('click', function(){
+    S.xferOpen = !S.xferOpen;
+    btn.setAttribute('aria-pressed', S.xferOpen ? 'true' : 'false');
+    btn.textContent = S.xferOpen ? '記載あり' : '記載なし';
+    document.getElementById('xferBody').hidden = !S.xferOpen;
+    if (S.xferOpen) claimOnce_();
+  });
+
+  XFER.forEach(function(f){
+    var el = document.getElementById('in_'+f.key);
+    if (el) el.addEventListener('input', function(){
+      S.dirty = true;
+      if (!S.me) needStaff(false); else claimOnce_();
+    });
+  });
+}
+
+function seal(id, name, at){
+  var el = document.getElementById(id);
+  el.classList.toggle('filled', !!name);
+  el.querySelector('.name').innerHTML = name ? (stampImg_(name) + esc(name)) : '—';
+  el.querySelector('.at').textContent = at || '';
+}
+
+/* 管理者印。
+   その日に在任している管理薬剤師の印影を、承認の有無にかかわらず毎日入れます。
+   承認済みかどうかは、印影の下の一行で分けて示します(情報を落とさないため)。
+   実際に承認した人がその日の管理薬剤師と違う場合は、代行として明示します。 */
+function sealAdmin_(d){
+  var el = document.getElementById('sealAdmin');
+  var nameEl = el.querySelector('.name');
+  var atEl = el.querySelector('.at');
+
+  var chief = adminOn(d.date);            // その日の管理薬剤師 = 印影の持ち主
+  var signer = d.admin || chief;          // 実際に承認した人(未承認なら管理薬剤師)
+
+  if (!chief && !d.admin){
+    el.classList.remove('filled');
+    el.classList.remove('await');
+    nameEl.innerHTML = '<span class="pending">管理薬剤師 未登録</span>';
+    atEl.textContent = '';
+    return;
+  }
+
+  el.classList.add('filled');
+  el.classList.toggle('await', !d.admin);
+  nameEl.innerHTML = stampImg_(chief || signer) + esc(chief || signer)
+    + (d.admin && chief && d.admin !== chief
+        ? '<span class="proxy">承認 ' + esc(d.admin) + '（代行）</span>' : '');
+  atEl.textContent = d.admin ? (d.approvedAt || '承認済') : '承認待ち';
+}
+
+/* 入力欄の中身を控える／戻す。
+   担当者を選び直したときにフォームを作り直すので、その前後で使う */
+function formSnapshot_(){
+  var snap = {};
+  FIELDS.concat(XFER).forEach(function(f){
+    var el = document.getElementById('in_' + f.key);
+    if (el) snap[f.key] = el.value;
+  });
+  return snap;
+}
+function formRestore_(snap){
+  if (!snap) return;
+  Object.keys(snap).forEach(function(k){
+    if (snap[k] === '') return;
+    var el = document.getElementById('in_' + k);
+    if (el && !el.disabled) el.value = snap[k];
+  });
+  FIELDS.forEach(function(f){
+    if (document.getElementById('in_' + f.key)) checkRange(f);
+  });
+}
+
+function checkRange(f){
+  if (!f.range) return;
+  var el = document.getElementById('in_'+f.key);
+  var wrap = el.closest('.field');
+  var v = parseFloat(el.value);
+  wrap.classList.toggle('out-of-range', !isNaN(v) && (v < f.range[0] || v > f.range[1]));
+}
+
+/* ---------- 保存・承認 ---------- */
+document.getElementById('btnSave').addEventListener('click', function(){
+  if (!S.me){
+    needStaff(true);
+    toast('担当者を選んでから保存してください', true);
+    return;
+  }
+  var payload = { date:S.sel, staff:S.me };
+  var missing = [];
+  var outOf = [];
+
+  FIELDS.forEach(function(f){
+    var el = document.getElementById('in_'+f.key);
+    var v = el.value.trim();
+    if (v === ''){ missing.push(f.label); return; }
+    var n = parseFloat(v);
+    if (isNaN(n) || n < f.min || n > f.max){ missing.push(f.label); return; }
+    if (f.range && (n < f.range[0] || n > f.range[1])) outOf.push(f.label);
+    payload[f.key] = n;
+  });
+
+  if (missing.length){ toast(missing.join('・') + ' を入力してください', true); return; }
+
+  // 管理に関する事項。「記載あり」のときだけ送り、最低限の項目は必須にする
+  XFER.forEach(function(f){ payload[f.key] = ''; });
+  if (S.xferOpen){
+    var lack = [];
+    XFER.forEach(function(f){
+      var el = document.getElementById('in_'+f.key);
+      payload[f.key] = el ? String(el.value).trim() : '';
+    });
+    if (!payload.xKind) lack.push('譲渡区分');
+    if (!payload.xDrug) lack.push('医薬品名称');
+    if (lack.length){
+      toast('管理に関する事項の ' + lack.join('・') + ' を入力してください', true);
+      return;
+    }
+  }
+
+  // 逸脱値も記録できなければ意味がないので、止めずに確認だけする
+  if (outOf.length &&
+      !confirm(outOf.join('・') + ' が管理基準を外れています。\nこの値のまま記録しますか？')){
+    return;
+  }
+
+  var btn = this; btn.disabled = true; btn.textContent = '保存中…';
+  call('saveDay', [payload], function(d){
+    S.dirty = false; S.editing = false; S.claimed = null;
+    apply(d);
+    refreshMissing();
+    toast('保存しました');
+  }, function(e){
+    btn.disabled = false; btn.textContent = '保存する';
+    fail(e);
+  });
+});
+
+document.getElementById('btnEdit').addEventListener('click', function(){
+  S.editing = true; renderForm();
+});
+
+document.getElementById('btnApprove').addEventListener('click', function(){
+  if (!S.me){ needStaff(true); toast('担当者を選んでください', true); return; }
+  if (!confirm(S.sel + ' の記録を承認します。よろしいですか？')) return;
+  call('approveDay', [{ date:S.sel, admin:S.me }], function(d){
+    apply(d); toast('承認しました');
+  });
+});
+
+/* ---------- 週の移動ボタン ---------- */
+document.getElementById('wkPrev').addEventListener('click', function(){
+  gotoWeek(addDays(S.week.days[0].date, -7));
+});
+document.getElementById('wkNext').addEventListener('click', function(){
+  gotoWeek(addDays(S.week.days[0].date, 7));
+});
+document.getElementById('wkNow').addEventListener('click', function(){ gotoWeek(null); });
+document.getElementById('wkJump').addEventListener('change', function(){
+  var v = this.value;
+  if (!v) return;
+  if (v > S.week.today){ this.value = S.week.today; v = S.week.today; }
+  gotoDate(v);
+});
+
+/* ---------- 入力もれ ---------- */
+document.getElementById('missScan').addEventListener('click', function(){ scanMissing(); });
+document.getElementById('missSpan').addEventListener('change', function(){ scanMissing(); });
+
+function scanMissing(){
+  var span = Number(document.getElementById('missSpan').value) || 30;
+  S.missSpan = span;
+  var btn = document.getElementById('missScan');
+  btn.disabled = true;
+  call('findMissing', [span], function(r){
+    btn.disabled = false; renderMissing(r);
+  }, function(e){ btn.disabled = false; fail(e); });
+}
+
+/* 保存や承認のあと、一覧を静かに取り直す(件数がずれたままにならないように) */
+function refreshMissing(){
+  if (!S.missSpan) return;
+  call('findMissing', [S.missSpan], function(r){ renderMissing(r); }, function(){});
+}
+
+function renderMissing(r){
+  var note = document.getElementById('missNote');
+  var list = document.getElementById('missList');
+  note.textContent = '過去' + r.span + '日';
+
+  if (!r.days.length){
+    list.innerHTML = '<p class="missnone">この範囲に未入力の日はありません。</p>';
+    return;
+  }
+  note.textContent = '過去' + r.span + '日で ' + r.days.length + ' 日';
+  list.innerHTML = r.days.map(function(d){
+    var lock = d.state === 'editing';
+    return '<button class="missday' + (lock ? ' lock' : '') + '" data-date="' + d.date + '">'
+      + d.date.slice(5).replace('-','/')
+      + '<span class="dw">' + d.dow + (lock ? ' 入力中' : '') + '</span></button>';
+  }).join('');
+
+  Array.prototype.forEach.call(list.querySelectorAll('.missday'), function(el){
+    el.addEventListener('click', function(){ gotoDate(el.getAttribute('data-date')); });
+  });
+}
+
+/* ---------- 小物 ---------- */
+function dayOf(date){
+  for (var i=0;i<S.week.days.length;i++) if (S.week.days[i].date === date) return S.week.days[i];
+  return S.week.days[0];
+}
+function fmt(v, dec){ return (v===null||v===undefined||v==='') ? '–' : Number(v).toFixed(dec); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+var toastTimer;
+function toast(msg, isErr){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 2600);
+}
+
+window.addEventListener('beforeunload', function(e){
+  release_(S.sel);
+  if (S.dirty){ e.preventDefault(); e.returnValue = ''; }
+});
+
+/* ============================================================
+   名簿と管理薬剤師の管理
+   ============================================================ */
+var A = { master:null, tab:'staff' };
+var $overlay = document.getElementById('overlay');
+
+document.getElementById('btnAdmin').addEventListener('click', openAdmin);
+document.getElementById('sheetClose').addEventListener('click', closeAdmin);
+$overlay.addEventListener('click', function(e){ if (e.target === this) closeAdmin(); });
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && $overlay.classList.contains('open')) closeAdmin();
+});
+Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(btn){
+  btn.addEventListener('click', function(){
+    A.tab = btn.getAttribute('data-tab');
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
+      b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+    });
+    renderSheet();
+  });
+});
+
+function openAdmin(){ $overlay.classList.add('open'); loadMaster(); }
+function closeAdmin(){ $overlay.classList.remove('open'); }
+function sheet(html){ document.getElementById('sheetBody').innerHTML = html; }
+
+function loadMaster(){
+  sheet('<div class="skeleton"></div>');
+  call('getStaffMaster', [], function(m){ A.master = m; renderSheet(); });
+}
+
+function renderSheet(){
+  if (!A.master) return;
+  if (A.tab === 'staff') renderStaffTab();
+  else if (A.tab === 'chief') renderChiefTab();
+  else renderLogTab();
+}
+
+/* ---------------- 担当者 ---------------- */
+function renderStaffTab(){
+  var chiefNames = {};
+  A.master.terms.forEach(function(t){ chiefNames[t.name] = true; });
+
+  var rows = A.master.staff.map(function(s){
+    return '<div class="mrow' + (s.active ? '' : ' retired') + '" data-id="' + s.id + '">'
+      + '<span class="mn">' + esc(s.name) + '</span>'
+      + sealBtn_(s)
+      + '<button class="mini" data-act="active">' + (s.active ? '退職にする' : '復帰させる') + '</button>'
+      + (s.records === 0 && !chiefNames[s.name]
+          ? '<button class="mini danger" data-act="delete">削除</button>' : '')
+      + '<span class="cnt">' + (s.records === 0
+          ? (chiefNames[s.name] ? '管理薬剤師の履歴に名前が残っています' : '記録なし ― 完全に削除できます')
+          : '日報 ' + s.records + ' 件に名前が残っています') + '</span>'
+      + '</div>';
+  }).join('');
+
+  sheet(rows
+    + '<div class="addrow">'
+    +   '<input id="newName" type="text" placeholder="追加する担当者の氏名" autocomplete="off">'
+    +   '<button class="mini on" id="addGo">追加</button>'
+    + '</div>'
+    + '<div class="note-block">'
+    +   '<b>退職と削除の違い</b>'
+    +   '日報や管理薬剤師の履歴に名前が残っている人は、削除ではなく退職にしてください。'
+    +   '退職にすると担当のプルダウンからは消えますが、過去の記録に押された名前はそのまま残ります。'
+    + '</div>');
+
+  Array.prototype.forEach.call(document.querySelectorAll('.mrow .sealbtn'), function(btn){
+    btn.addEventListener('click', function(){
+      openSealEditor(btn.closest('.mrow').getAttribute('data-id'));
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('.mrow .mini'), function(btn){
+    btn.addEventListener('click', function(){
+      var id  = btn.closest('.mrow').getAttribute('data-id');
+      var rec = A.master.staff.filter(function(s){ return String(s.id) === id; })[0];
+      if (btn.getAttribute('data-act') === 'delete'){
+        if (!confirm(rec.name + ' さんを名簿から削除します。よろしいですか？')) return;
+        masterCall('removeStaff', { id:id, actor:S.me }, rec.name + ' さんを削除しました');
+      } else {
+        if (rec.active && !confirm(rec.name + ' さんを退職にします。\n過去の記録はそのまま残ります。')) return;
+        masterCall('updateStaff', { id:id, active:!rec.active, actor:S.me },
+          rec.name + ' さんを' + (rec.active ? '退職にしました' : '復帰させました'));
+      }
+    });
+  });
+
+  var add = function(){
+    var el = document.getElementById('newName');
+    var name = el.value.trim();
+    if (!name){ el.focus(); return; }
+    masterCall('addStaff', { name:name, actor:S.me }, name + ' さんを追加しました');
+  };
+  document.getElementById('addGo').addEventListener('click', add);
+  document.getElementById('newName').addEventListener('keydown', function(e){
+    if (e.key === 'Enter') add();
+  });
+}
+
+/* ---------------- 印影の登録 ----------------
+   スキャンした印鑑は、たいてい白い余白つきで背景が不透明です。
+   そのまま貼ると罫線が白い四角で隠れるので、
+   ブラウザ側で「白を透過 → 余白を切り落とす → 正方形300pxに揃える」
+   まで済ませてから保存します。全員分の見た目が揃うのが狙いです。 */
+
+function sealBtn_(s){
+  return s.sealUrl
+    ? '<button class="sealbtn has" type="button" title="印影を差し替える">'
+      + '<img src="' + s.sealUrl + '" alt="">登録済</button>'
+    : '<button class="sealbtn" type="button" title="印影を登録する">'
+      + '<span class="no">印</span>未登録</button>';
+}
+
+var SEAL = { id:null, src:null, threshold:210 };
+
+function openSealEditor(id){
+  var s = A.master.staff.filter(function(x){ return String(x.id) === String(id); })[0];
+  if (!s) return;
+  SEAL = { id:id, src:null, threshold:210 };
+
+  sheet('<div class="sealedit">'
+    + '<h3>' + esc(s.name) + ' さんの印影</h3>'
+    + '<p class="lead">スキャンした画像を選ぶと、白い背景を透過にして余白を切り落とし、'
+    + '300px角に揃えて保存します。印刷用の記録簿には、この形で貼られます。</p>'
+    + '<button class="filepick" id="pick">画像ファイルを選ぶ</button>'
+    + '<input id="sealFile" type="file" accept="image/png,image/jpeg,image/webp" hidden>'
+    + '<div class="previews">'
+    +   '<div class="pv"><span class="cap">元の画像</span>'
+    +     '<div class="frame empty" id="pvBefore">未選択</div></div>'
+    +   '<div class="pv"><span class="cap">保存される形</span>'
+    +     '<div class="frame' + (s.sealUrl ? '' : ' empty') + '" id="pvAfter">'
+    +       (s.sealUrl ? '<img src="' + s.sealUrl + '" alt="現在の印影">' : '未選択') + '</div></div>'
+    + '</div>'
+    + '<div class="slider" id="thWrap" hidden>'
+    +   '<label>背景として抜く明るさ <span id="thVal">210</span></label>'
+    +   '<input type="range" id="th" min="140" max="250" value="210">'
+    + '</div>'
+    + '<div class="actions">'
+    +   '<button class="btn primary" id="sealSave" disabled>保存する</button>'
+    +   '<button class="btn ghost" id="sealBack">戻る</button>'
+    +   (s.sealUrl ? '<button class="btn ghost" id="sealDel">印影を削除</button>' : '')
+    + '</div>'
+    + '</div>');
+
+  var file = document.getElementById('sealFile');
+  document.getElementById('pick').addEventListener('click', function(){ file.click(); });
+  file.addEventListener('change', function(){
+    var f = file.files && file.files[0];
+    if (!f) return;
+    if (f.size > 8 * 1024 * 1024){ toast('画像が大きすぎます(8MBまで)', true); return; }
+    var r = new FileReader();
+    r.onload = function(){ SEAL.src = r.result; loadSealPreview(); };
+    r.readAsDataURL(f);
+  });
+
+  document.getElementById('th').addEventListener('input', function(){
+    SEAL.threshold = parseInt(this.value, 10);
+    document.getElementById('thVal').textContent = this.value;
+    renderSealAfter();
+  });
+
+  document.getElementById('sealBack').addEventListener('click', function(){ renderSheet(); });
+  document.getElementById('sealSave').addEventListener('click', function(){
+    var url = document.getElementById('pvAfter').querySelector('canvas');
+    if (!url) return;
+    masterCall('setSeal', { id:SEAL.id, dataUrl:url.toDataURL('image/png'), actor:S.me },
+      esc(s.name) + ' さんの印影を登録しました');
+  });
+  var del = document.getElementById('sealDel');
+  if (del) del.addEventListener('click', function(){
+    if (!confirm(s.name + ' さんの印影を削除します。よろしいですか？')) return;
+    masterCall('removeSeal', { id:SEAL.id, actor:S.me }, s.name + ' さんの印影を削除しました');
+  });
+}
+
+function loadSealPreview(){
+  var img = new Image();
+  img.onload = function(){
+    SEAL.img = img;
+    var b = document.getElementById('pvBefore');
+    b.classList.remove('empty');
+    b.innerHTML = '<img src="' + SEAL.src + '" alt="">';
+    document.getElementById('thWrap').hidden = false;
+    renderSealAfter();
+  };
+  img.onerror = function(){ toast('画像を読み込めませんでした', true); };
+  img.src = SEAL.src;
+}
+
+function renderSealAfter(){
+  if (!SEAL.img) return;
+  var out = normalizeSeal(SEAL.img, SEAL.threshold);
+  var a = document.getElementById('pvAfter');
+  a.classList.remove('empty');
+  a.innerHTML = '';
+  a.appendChild(out);
+  document.getElementById('sealSave').disabled = false;
+}
+
+/* 白背景を抜き、印影の外接矩形で切り出して 300px 角に収める */
+function normalizeSeal(img, threshold){
+  var W = img.naturalWidth, H = img.naturalHeight;
+  var scale = Math.min(1, 900 / Math.max(W, H));      // 巨大なスキャンは先に縮める
+  var w = Math.max(1, Math.round(W * scale));
+  var h = Math.max(1, Math.round(H * scale));
+
+  var c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  var ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+
+  var d = ctx.getImageData(0, 0, w, h);
+  var px = d.data;
+  var minX = w, minY = h, maxX = -1, maxY = -1;
+
+  for (var y = 0; y < h; y++){
+    for (var x = 0; x < w; x++){
+      var i = (y * w + x) * 4;
+      var r = px[i], g = px[i+1], b = px[i+2];
+      var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      // 明るくて色味の乏しい画素を背景とみなす(朱色は彩度が高いので残る)
+      if (mn >= threshold && (mx - mn) < 45){
+        px[i+3] = 0;
+      } else if (px[i+3] > 24){
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  ctx.putImageData(d, 0, 0);
+
+  if (maxX < 0){ minX = 0; minY = 0; maxX = w - 1; maxY = h - 1; }   // 全部抜けた場合の保険
+  var cw = maxX - minX + 1, ch = maxY - minY + 1;
+  var side = Math.max(cw, ch);
+  var pad = Math.round(side * 0.04);
+  side += pad * 2;
+
+  var out = document.createElement('canvas');
+  out.width = 300; out.height = 300;
+  var octx = out.getContext('2d');
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(c,
+    minX - (side - cw) / 2, minY - (side - ch) / 2, side, side,
+    0, 0, 300, 300);
+  return out;
+}
+
+/* ---------------- 管理薬剤師 ---------------- */
+function renderChiefTab(){
+  var terms = A.master.terms.slice().sort(function(a,b){ return a.from < b.from ? 1 : -1; });
+  var today = A.master.today;
+  var now = terms.filter(function(t){ return t.from <= today; })[0];
+
+  var head = now
+    ? '<div class="chief"><div><span class="ttl">現在の管理薬剤師</span>'
+      + '<span class="nm">' + esc(now.name) + '</span>'
+      + '<span class="sub">' + jp(now.from) + ' 就任 ／ 在任 ' + daysSince(now.from) + ' 日目</span>'
+      + '</div></div>'
+    : '<div class="chief none"><div><span class="ttl">管理薬剤師</span>'
+      + '<span class="nm">未登録です</span>'
+      + '<span class="sub">下の欄から就任日とあわせて登録してください</span></div></div>';
+
+  var list = terms.map(function(t, i){
+    var next = terms[i-1];                       // 1つ新しい任期
+    var to = next ? addDays(next.from, -1) : null;
+    var future = t.from > today;
+    var isNow = !future && !next;
+    return '<div class="term' + (isNow ? ' now' : '') + '" data-id="' + t.id + '">'
+      + '<span class="tn">' + esc(t.name) + '</span>'
+      + '<span class="tp">' + jp(t.from) + ' 〜 ' + (to ? jp(to) : '') + '</span>'
+      + (isNow ? '<span class="chip appr">現任</span>'
+               : future ? '<span class="chip lock">就任予定</span>' : '<span></span>')
+      + '<span class="acts">'
+      +   '<button class="mini" data-act="edit">就任日を直す</button>'
+      +   '<button class="mini danger" data-act="del">削除</button>'
+      + '</span>'
+      + '</div>';
+  }).join('') || '<div class="logempty">まだ登録がありません。</div>';
+
+  var opts = A.master.staff.filter(function(s){ return s.active; })
+    .map(function(s){ return '<option value="' + s.id + '">' + esc(s.name) + '</option>'; }).join('');
+
+  sheet(head
+    + '<div class="terms">' + list + '</div>'
+    + '<div class="formrow">'
+    +   '<label>管理薬剤師の交代を登録する</label>'
+    +   '<select id="chiefWho">' + opts + '</select>'
+    +   '<input id="chiefFrom" type="date" value="' + today + '">'
+    +   '<button class="mini on" id="chiefGo">登録</button>'
+    + '</div>'
+    + '<div class="note-block">'
+    +   '<b>就任日を入れると、前任の任期は自動で前日までになります</b>'
+    +   '各日の日報には、その日に在任していた管理薬剤師が「管理者印」として表示されます。'
+    +   '交代日をあとから直しても、過去の日報の表示は自動で追従します。'
+    +   '先の日付を入れておけば、交代の予約もできます。'
+    + '</div>');
+
+  Array.prototype.forEach.call(document.querySelectorAll('.term .mini'), function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.closest('.term').getAttribute('data-id');
+      var t  = A.master.terms.filter(function(x){ return String(x.id) === id; })[0];
+      if (btn.getAttribute('data-act') === 'del'){
+        if (!confirm(t.name + ' さんの任期(' + jp(t.from) + '〜)を削除します。\n' +
+                     'この期間の管理者印は、前任の方の名前に変わります。')) return;
+        masterCall('removeTerm', { id:id, actor:S.me }, '任期を削除しました');
+      } else {
+        var v = prompt(t.name + ' さんの就任日(YYYY-MM-DD)', t.from);
+        if (!v) return;
+        masterCall('updateTerm', { id:id, from:v.trim(), actor:S.me }, '就任日を変更しました');
+      }
+    });
+  });
+
+  document.getElementById('chiefGo').addEventListener('click', function(){
+    var who = document.getElementById('chiefWho');
+    var from = document.getElementById('chiefFrom').value;
+    if (!who.value || !from){ toast('担当者と就任日を選んでください', true); return; }
+    var name = who.options[who.selectedIndex].text;
+    if (!confirm(name + ' さんを ' + jp(from) + ' から管理薬剤師にします。よろしいですか？')) return;
+    masterCall('setChief', { staffId:who.value, from:from, actor:S.me },
+      name + ' さんを管理薬剤師に登録しました');
+  });
+}
+
+/* ---------------- 変更履歴(トランザクションログ) ---------------- */
+function renderLogTab(){
+  var log = A.master.log || [];
+  sheet(log.length
+    ? log.map(function(l){
+        return '<div class="logline">'
+          + '<time>' + esc(l.at) + '</time>'
+          + '<div class="lt"><b>' + esc(l.action) + '</b>'
+          + '<span>' + esc(l.detail) + (l.actor ? ' ／ 操作 ' + esc(l.actor) : '') + '</span></div>'
+          + '</div>';
+      }).join('')
+    : '<div class="logempty">まだ変更はありません。</div>');
+}
+
+/* 名簿や任期を変えたら、画面全体を作り直す */
+function masterCall(fn, arg, okMsg){
+  call(fn, [arg], function(m){
+    A.master = m;
+    renderSheet();
+    call('getWeekState', [null], function(d){
+      S.staff = d.staff;
+      S.terms = d.terms || [];
+      var names = activeStaff().map(function(s){ return s.name; });
+      if (names.indexOf(S.me) < 0) S.me = '';   // 退職などで消えたら空欄に戻す
+      renderIdentity();
+      apply(d);
+    });
+    toast(okMsg);
+  }, function(e){
+    toast((e && e.message) || '変更できませんでした', true);
+  });
+}
+
+/* ---------- 日付の小道具 ---------- */
+function jp(iso){
+  if (!iso) return '';
+  var p = iso.split('-');
+  return p[0] + '/' + p[1] + '/' + p[2];
+}
+function addDays(iso, n){
+  var p = iso.split('-');
+  var d = new Date(+p[0], +p[1]-1, +p[2]);
+  d.setDate(d.getDate() + n);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')
+       + '-' + String(d.getDate()).padStart(2,'0');
+}
+function daysSince(iso){
+  var p = iso.split('-');
+  var from = new Date(+p[0], +p[1]-1, +p[2]);
+  var now = new Date(); now = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.floor((now - from) / 86400000) + 1;
+}
+
+/* ============================================================
+   帳票の出力
+   ============================================================ */
+var P = { from:'', to:'', preview:null, job:null, busy:false };
+var $pv = document.getElementById('pvOverlay');
+
+document.getElementById('btnPrint').addEventListener('click', openPrint);
+document.getElementById('pvClose').addEventListener('click', function(){
+  $pv.classList.remove('open');
+});
+$pv.addEventListener('click', function(e){ if (e.target === this) $pv.classList.remove('open'); });
+
+function openPrint(){
+  $pv.classList.add('open');
+  if (!P.from){
+    P.from = S.week.weekStart || S.week.days[0].date;
+    P.to   = S.week.days[6].date;
+  }
+  loadPreview();
+}
+
+function loadPreview(){
+  document.getElementById('pvBody').innerHTML = '<div class="skeleton"></div>';
+  call('getPrintPreview', [P.from], function(d){ P.preview = d; renderPrint(); });
+}
+
+function renderPrint(){
+  var d = P.preview;
+  var h = '';
+
+  if (!d.hasTemplate){
+    h += '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
+       + 'スクリプトエディタで <code>buildTemplate</code> を1回実行してください。'
+       + '実行すると「帳票テンプレート」シートが作られ、ここから出力できるようになります。'
+       + '</div></div>';
+  }
+
+  h += '<div class="presets">'
+    +   preset('今週','thisWeek') + preset('先週','lastWeek')
+    +   preset('今月','thisMonth') + preset('前月','lastMonth')
+    + '</div>'
+    + '<div class="range">'
+    +   '<input type="date" id="pvFrom" value="' + P.from + '">'
+    +   '<span class="tilde">〜</span>'
+    +   '<input type="date" id="pvTo" value="' + P.to + '">'
+    + '</div>';
+
+  var weeks = weekCount_(P.from, P.to);
+  h += '<p class="pvnote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
+     + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
+
+  h += '<div class="pvwrap">' + printTable_(d) + '</div>';
+
+  if (P.job && P.job.state === 'running'){
+    var pct = Math.round(P.job.done / P.job.weeks.length * 100);
+    h += '<div class="progress"><div class="bar"><i style="width:' + pct + '%"></i></div>'
+       + '<div class="txt">' + P.job.done + ' / ' + P.job.weeks.length + ' 週 完了'
+       + '（この画面を開いたまま少しお待ちください）</div></div>'
+       + '<div class="actions"><button class="btn ghost" id="pvCancel">中止する</button></div>';
+  } else if (P.job && P.job.state === 'done'){
+    h += '<div class="donebox"><b>出力しました</b>'
+       + P.job.title + '.pdf（' + P.job.weeks.length + 'ページ）を'
+       + 'ドライブの「業務日報_出力」フォルダに保存しました。'
+       + '<div style="margin-top:6px"><a href="' + P.job.pdfUrl + '" target="_blank">PDFを開く</a></div>'
+       + '</div>'
+       + '<div class="actions"><button class="btn primary" id="pvGo">別の期間を出力する</button></div>';
+  } else {
+    h += '<div class="actions"><button class="btn primary" id="pvGo"'
+       + (d.hasTemplate ? '' : ' disabled') + '>この期間を出力する</button></div>';
+  }
+
+  document.getElementById('pvBody').innerHTML = h;
+  wirePrint_();
+}
+
+function preset(label, key){
+  return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
+}
+
+function wirePrint_(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'), function(b){
+    b.addEventListener('click', function(){
+      applyPreset_(b.getAttribute('data-preset'));
+      P.job = null;
+      loadPreview();
+    });
+  });
+  ['pvFrom','pvTo'].forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', function(){
+      P.from = document.getElementById('pvFrom').value;
+      P.to   = document.getElementById('pvTo').value;
+      if (P.from && P.to && P.from > P.to){ P.to = P.from; }
+      P.job = null;
+      loadPreview();
+    });
+  });
+  var go = document.getElementById('pvGo');
+  if (go) go.addEventListener('click', startPrint_);
+  var cx = document.getElementById('pvCancel');
+  if (cx) cx.addEventListener('click', function(){
+    call('cancelExport', [], function(){ P.job = null; loadPreview(); toast('中止しました'); });
+  });
+}
+
+function applyPreset_(key){
+  var t = S.week.today, p = t.split('-');
+  var d = new Date(+p[0], +p[1]-1, +p[2]);
+  var iso = function(x){
+    return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0')
+         + '-' + String(x.getDate()).padStart(2,'0');
+  };
+  if (key === 'thisWeek'){ P.from = S.week.weekStart; P.to = addDays(P.from, 6); }
+  else if (key === 'lastWeek'){ P.from = addDays(S.week.weekStart, -7); P.to = addDays(P.from, 6); }
+  else if (key === 'thisMonth'){
+    P.from = iso(new Date(d.getFullYear(), d.getMonth(), 1));
+    P.to   = iso(new Date(d.getFullYear(), d.getMonth()+1, 0));
+  } else {
+    P.from = iso(new Date(d.getFullYear(), d.getMonth()-1, 1));
+    P.to   = iso(new Date(d.getFullYear(), d.getMonth(), 0));
+  }
+}
+
+/* 何週になるか(帳票は週単位なので、端の週はまるごと1ページ) */
+function weekCount_(from, to){
+  if (!from || !to) return 0;
+  var a = new Date(from), b = new Date(to);
+  return Math.floor((b - a) / 86400000 / 7) + 1;
+}
+
+/* 画面のプレビュー。
+   固定の見た目を持たず、テンプレートシートの実寸(列幅・行高・見出し)を
+   読んで描きます。シートを直せばここもそのまま追従します。 */
+function printTable_(d){
+  var L = d.layout;
+  if (!L) return '<div class="logempty">テンプレートが読めませんでした。</div>';
+
+  var R = d.ranges;
+  var C = L.col;
+  var px = function(v){ return Math.round(v) + 'px'; };
+
+  // 結合された見出しを復元する(空のセルは直前の見出しの続き)
+  var groups = [];
+  L.row1.forEach(function(txt, i){
+    if (i === 0 || String(txt).trim() !== ''){
+      groups.push({ label:String(txt), span:1, first:i });
+    } else {
+      groups[groups.length - 1].span++;
+    }
+  });
+
+  var head = '<colgroup>'
+    + L.widths.map(function(w){ return '<col style="width:' + px(w) + '">'; }).join('')
+    + '</colgroup><thead><tr style="height:' + px(L.heights[0]) + '">'
+    + groups.map(function(g){
+        var rs = (g.first === C.DATE - 1) ? ' rowspan="' + L.headRows + '"' : '';
+        return '<th' + rs + (g.span > 1 ? ' colspan="' + g.span + '"' : '') + '>'
+             + esc(g.label).replace(/\n/g, '<br>') + '</th>';
+      }).join('')
+    + '</tr><tr style="height:' + px(L.heights[1]) + '">'
+    +   '<th class="subhd" colspan="' + (L.cols - C.NOTE + 1) + '">' + esc(L.sub) + '</th>'
+    + '</tr></thead>';
+
+  // 未記入の日はテンプレートの下地(℃　/ と %)をそのまま出す
+  var cell = function(v, r, unit, dec){
+    if (v === null || v === undefined) return '<td class="e">' + esc(unit) + '</td>';
+    var ng = r && (v < r[0] || v > r[1]);
+    return '<td class="e' + (ng ? ' ng' : '') + '">'
+         + Number(v).toFixed(dec) + esc(unit) + '</td>';
+  };
+  var stamp = function(name){
+    if (!name) return '<td class="st"></td>';
+    var u = d.seals[name];
+    return '<td class="st">' + (u ? '<img src="' + u + '" alt="">' : '')
+         + '<span>' + esc(name) + '</span></td>';
+  };
+  var blank = function(n){
+    var out = '';
+    for (var i = 0; i < n; i++) out += '<td></td>';
+    return out;
+  };
+
+  var body = d.rows.map(function(r, i){
+    var hUp = L.heights[L.headRows + i * L.rowsPerDay];
+    var hLo = L.heights[L.headRows + i * L.rowsPerDay + 1];
+    return '<tr style="height:' + px(hUp) + '">'
+      + '<td class="dt" rowspan="' + L.rowsPerDay + '">' + r.date.replace(/-/g,'/')
+      +   '<b>' + r.dow + '</b>' + esc(r.hours) + '</td>'
+      + '<td class="n">' + (r.filled && r.rx !== null ? r.rx : '') + '</td>'
+      + '<td class="u">' + esc(L.unitRx) + '</td>'
+      + '<td class="n">' + (r.filled && r.inquiry !== null ? r.inquiry : '') + '</td>'
+      + '<td class="u">' + esc(L.unitInq) + '</td>'
+      + blank(C.ROOM_T - C.INQ - 2)          // 単位とG列の間にある列(F列など)
+      + cell(r.roomTemp, R.ROOM_TEMP,  L.phTemp,  1)
+      + cell(r.roomHumid, R.ROOM_HUMID, L.phHumid, 0)
+      + cell(r.coldTemp, R.COLD_TEMP,  L.phTemp,  1)
+      + cell(r.coldHumid, R.COLD_HUMID, L.phHumid, 0)
+      // 押印欄の並びは設定に従う(担当者印と管理者印を入れ替えても崩れない)
+      + (C.STAFF < C.ADMIN ? stamp(r.staff) + stamp(r.admin)
+                           : stamp(r.admin) + stamp(r.staff))
+      + '</tr>'
+      + '<tr style="height:' + px(hLo) + '">'
+      +   '<td class="nt" colspan="' + (L.cols - C.NOTE + 1) + '">' + esc(r.note) + '</td>'
+      + '</tr>';
+  }).join('');
+
+  return '<table class="pv" style="width:' + px(L.widths.reduce(function(a,b){return a+b;},0))
+    + '">' + head + '<tbody>' + body + '</tbody></table>';
+}
+
+/* 出力。6分の上限があるので、終わるまで小分けに呼び続ける */
+function startPrint_(){
+  if (P.busy) return;
+  var weeks = weekCount_(P.from, P.to);
+  if (!confirm(jp(P.from) + ' 〜 ' + jp(P.to) + ' の ' + weeks + ' 週分を出力します。\nよろしいですか？')) return;
+
+  P.busy = true;
+  var btn = document.getElementById('pvGo');
+  if (btn){ btn.disabled = true; btn.textContent = '準備中…'; }
+
+  call('startExport', [{ from:P.from, to:P.to, title:jobTitle_(), actor:S.me }], function(job){
+    P.job = job;
+    renderPrint();
+    pump_();
+  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+}
+
+function pump_(){
+  call('runExportChunk', [], function(job){
+    P.job = job;
+    renderPrint();
+    if (job && job.state === 'running'){
+      setTimeout(pump_, 400);
+    } else {
+      P.busy = false;
+      if (job && job.state === 'done') toast('PDFを出力しました');
+    }
+  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+}
+
+function jobTitle_(){
+  var a = P.from.split('-'), b = P.to.split('-');
+  if (a[0] === b[0] && a[1] === b[1]) return a[0] + '年' + a[1] + '月分';
+  return a[0] + a[1] + a[2] + '-' + b[0] + b[1] + b[2];
+}
+
+
+/* ============================================================
+   プレビュー用のダミーデータ
+   ブラウザで直接開いたときだけ使われる(GAS上では使われない)
+   ============================================================ */
+var MOCK = (function(){
+  var today = new Date();
+  // 帳票は土曜始まりの1週間
+  var weekTop = new Date(today);
+  weekTop.setDate(today.getDate() - ((today.getDay() - 6 + 7) % 7));
+
+  function iso(d){
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')
+         + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  function shift(base, n){ var d = new Date(base); d.setDate(d.getDate()+n); return iso(d); }
+  function stamp(){
+    var n = new Date();
+    return String(n.getMonth()+1).padStart(2,'0')+'/'+String(n.getDate()).padStart(2,'0')
+         + ' ' + String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+  }
+  var DOW = ['日','月','火','水','木','金','土'];
+  var todayIso = iso(today);
+  var seq = 5, tseq = 3, authMode = 'select', demoRegistered = true;
+
+  // プレビュー用のサンプル印影(実際は各自がアップロードしたPNGが入ります)
+  var SEAL_A = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAFRklEQVR42u3dO3IbOxBG4RkU1+LAa9DyvQYG2owdOVEg8QEM+vGdqpvaYqMP/u4Zmfc4AAAAAAAAAAAAanIqwXX8+f3r76w/6+P+6ewI0lsC8hCEDKQhCCEIQxBSkIUgpCALQYgBohCEFGQhCDGIQhBiEIUgxCAKQWqLMbOhqn4ugjQQY2fDdP3cBAnaJBmaQj0IcmkjZG4CNWooyBWHXnF8ULcGgqw85E6PM9WxoCCrDrXzm2M1LSDIikP0u0fqXEKQ2YdGDDUvI4h/063+BHEwziMQw2FgZx2j/47c2UEOYjijcoLMKDwxnFfJEYscPceuiOPWIAdIkmTEerc4xHCWZROEHNIkYpIMcoAkgUesd4pAjB4j185zHoqG6GmyM0kGOUCSYIKQgyRZJBldigvnmEKQV28BcpBkR4oMcoAkAQQhBzJKMioWD3aSVIK8Yjs5SBIhRW5RR6suPFIfl8X39VtZnxFRDg0hRaJcwqNKkWAfSSWIvQMV9pHhOICLBZEeqJIigxwgSeARixyI3B9T34NkeOfhvUN9Zr4bGZ1vB0iRywTxxhzZJoXQCSI98jRJ5xQZOw6CHOvFqJjoz/bNjBrctFPttFj9y3zVGasORnpIiwop4ldN7CJYJYj06Lu8dkkRCSJFEEEQ6aG2GT/zy4K4kdAhQY1YjW5Ul9pFgljO0WVZlyBGDewURHpY1jN/5qcFcQNJkU6f3YjlRsUuQRyWFMl+KYyuRZUiLgcjFvAmy54jR7nFpF6fxFrRnxIEmCGImxgd95AlCWJJRJVRz4gFEAQgCLBHEAs6ui7q52xBoi/o0b68+qqfp9OXds/sVyMWTAoEgUfvBIEUIQikCEGALIJUeoKFHl8P9Ewf/vRZJQhAEFjWCQKjMEEgRQgCKUIQgCBIniLdxyyCAASBFCEIQBDsoWuKEAQe+RIEUoQgkCIEAQiCsCnSbcwiCPANN4tl/Fsy+s9TeX/5MUFm/vNFINqF4ovjADsIQBCAIABBgK6CeJKFnczuv4feg3zcP8+sjf/1MV7X/z+IC++1uhqxQCKCYOUtawcBCCJy8XqKRDjzFT/DmFkkoNroaMSCyWGHIMYsy3oFOSUIXIyzBLGHSJFun2NpghizpEj2v8+IhZYpskwQYxY6Cb48QYxZPZvsqnNf/fcYsYDZgjwbU1LEsh7hz39lPZAgsKyvEMSyjkzTw6v9OroVCjVS5Kp+ujlmGMMWJYhlHV974OP+ef7/L/NyLkEgLa7YQaQIon0LzMyfzWNeYLUgUgQV02NrgpAEGfplmiBeHKLiXjQ63gqQHo9ym21t9KaXdNIjTYJIEUTvjxHBXpJgVl/MnhCWJAhJUEGOECMWEJllgkgRZE+PkAlCEnK0SJB3rCYJOSKkx3Ecxxn1g3tfQZAIfXLJiGUfQdZLdFQrGuwdKQWxjyDL3rEtQUiCTHJsGbFIgixyhN9BSEKONjvIrFuAJH3l2PHof1uCkIQc0eXYPmKRhByR5TiOi96kr252b93r7hu7zzbEkv5uEaQJOUoLQhJyRJ0KzmqFNXI5v5IJMrM40oQcZQUhCTkicVYvupHLGZUVZHYSEMW5lBixVhXP2EWOcgkiTdSfIBtTgChqXkqQVaMSUdS5jCCrd4rOsqhpIUFWL96dRFHHooKsPtzKsqhbE0GuPPDsh65GjQW5ugmyNIJ6EGRrU0Rqkq6fmyAJG2ZlA1X9XAQhShk6POVr97yfKMQgCFGIQRCiEIMgZCEFQYhCDIKQhRQEIQspCIKEwhCCIKQhA0HIQwIAAAAAAAAAAB7kH5oC8/+VfJnVAAAAAElFTkSuQmCC';
+  var SEAL_B = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAF7ElEQVR42u3dy5UbNxAFUBLHsXjhGBS+Y/DCyVgr7awzQxJA/e4LQNNdqMsCSJH9eIiIiIiIiIiIiIiIiPTMUwnu5e+//vxv17/1459/rR0gsxHAAwgM0AACBDCAQAELIFDAAggYAgogUMACCBigAAIGKICAAQogvWHsbKiu9wXIABiRDTP1vgFJ2iQVmkI9ALnaCJWbQI0GArmx6B23D+o2AMjJRZ70dqY6NgRyalEnf3Kspg2AnFhE//dInVsA2b1oYKh5GyC+063+gFgY65Eoy2JIZB2z/x+55wQcYFijdkB2FB4M69VyiwXHzG1Xxu3WgkMgKbLF+rQ4YFjLthMEDtMk4yRZcAgkibdYnxQBjBlbrsh1Xoom2adJ5CRZcAgkyYDAAUkVJGtKccU6lgDy7qsAHJBETJEFh0CSAAgcUhHJ6lg8cSYpBeQd7XBAkmGKrIw4RLL018p48aaHKZIFyepSJHEeKQXEuUM6nEeW5RC5DMT0kC5TZMEhkCTeYsEhmftjKxCfeUiG7OzD0AmSYXpAnb8+Lb5yW7HRfl0zJP3qs+ua18RXhf8rICS56xPVLytCazYckNSoz6t9s+N6l8WHRH0OAqk0Pb57rVORVKjP7SmyLD4k6nMISJXp8e5iTmmCavW5OUVGTJCqv+qXGUf0drnMGaRKMSHphePW31+TmgaSuZPj3fsd9zYvJLZVx4FU+2AQkp44bhzWx36jcCISkyPhFitzYSch6Yrj9LWt7o0BicnxSS38aENzJHAk3mJVKnBHJFNwnLzW1aERIDE5TtXGFqshEjgKbLEqF7oykqk4Tl27CdIIickRCGTil4gqIYHjTL1WtsaCBI5M92KLVRwJHEUP6ZCcRwIHIJDAkR+I34vKhQSOey8yK1MDQQJHtv6zxSqEBA5nEEjgAASS15oeDkAggQMQSF5DAEcBIK8s0vRF2YkEjjvr8FWdTZCESOCwxYLEmQMQSPr+PUCkTNPCAQgkcITkj2435MlQ87aXJogIICKAiAAiAogIICKAiMhv0u5zkGzvwd/4nMKHhSZIyVT4ZUUBpDUOSAAZhcNz3AGB4wsckBQCsvPri3B8v86Q3FmHr+psgiTeVkFiiwXHFwggAQQOB3dA4Pis6SEBBA5I+gOZsBCRP80Dyd17XDcW1QLsrSMke/KdOtpiFcMBiTMIHJAAAgckY4F0KnyF38qF5Ny9rGyLDQckmepli9UAByQFzyCVC175EQRTkZy6dhOkEQ6TJBhI93NIp4fXQLKnNitrw8EBSYZrtcV69H7smUlyGUi3bdaEZwJC8n4tVuYGhAOS6Gsbu8Wa+DRZk+QSkFcLna24kx+13AnJq9fzzr2PmyCeQ26SXAFSsVngmIvk3ftdFZoTDkii/v6ILRYcJkkIkAqHdTj6IblxOB8zQSJ+YkedTJBSU+Tmj7RNQhJRp5vTY8wZ5JVCTf+JI3U6AKTKB4cnfyh6EpKoOt2eHqETJBsSOHLXKapf1umCVlh8OPrVade1hp5BIt9H3/G4s0lIIusU2Scro9pqrzIO7n2vN/xdLN9ak8z9sTLohUR29cXuaXdkgkAiHXCk2GKJZM4xIKaIVJ8eKScIJHCMmCCfqIYEjgzT48oE8VmDVO6vlfUmTBHTI8OL7+pWNHHuKAnEeUSqnDvCJggkUglHyBYLEqmCI/0ZBBI4xpxBdr0KQDIXR8RHBmETBBI4suMI32JBAkdmHI/H4/GsXrzoAkrvtU1xSP+0CKYJHK2BQAJH1l3Bs1thbbmsX8sJsrM4pgkcbYFAAkemPLsX3ZbLGrUFsnsSgGJdWmyxThXPtguOdhPENFF/QAKnAChq3grIqa0SKOrcBsjpM8VkLGraCMjpg/ckKOrYFMjpxe2MRd2GALm54NUXXY0GA7ndBFUaQT0ACW2KTE0y9b4BKdgwJxuo630BAkqbTHiXb9z7/aCAAQgoYAACChiAwAIFIKCAAQgsUAACCxSASEEwQAACDQyAwAOBiIiIiIiIiIiIiMg38xO0tp1pduyeFAAAAABJRU5ErkJggg==';
+
+  var staff = [
+    { id:'s1', name:'関根 禎浩', active:true,  sealUrl:SEAL_A },
+    { id:'s2', name:'山田 太郎', active:true  },
+    { id:'s3', name:'佐藤 花子', active:true,  sealUrl:SEAL_B },
+    { id:'s4', name:'高橋 実',   active:false }
+  ];
+
+  // 管理薬剤師の任期。開始日だけを持ち、終了日は次の任期の前日として導出する
+  var terms = [
+    { id:'t1', staffId:'s4', name:'高橋 実',   from: shift(today, -400) },
+    { id:'t2', staffId:'s1', name:'関根 禎浩', from: shift(today, -120) }
+  ];
+
+  var log = [
+    { at: shift(today,-120).slice(5).replace('-','/') + ' 09:00', action:'管理薬剤師の交代',
+      detail:'高橋 実 → 関根 禎浩(' + shift(today,-120) + ' から)', actor:'高橋 実' },
+    { at: shift(today,-118).slice(5).replace('-','/') + ' 10:20', action:'担当者を退職',
+      detail:'高橋 実', actor:'関根 禎浩' }
+  ];
+
+  var store = {};
+
+  function names(){ return staff.filter(function(s){ return s.active; }); }
+  function chiefOn(date){
+    var hit = null;
+    terms.forEach(function(t){ if (t.from <= date && (!hit || t.from > hit.from)) hit = t; });
+    return hit ? hit.name : '';
+  }
+  function records(name){
+    var n = 0;
+    for (var k in store) if (store[k] && store[k].staff === name) n++;
+    return n;
+  }
+  function staffOut(){
+    return staff.map(function(s){
+      return { id:s.id, name:s.name, active:s.active, records:records(s.name),
+               sealUrl: s.sealUrl || '' };
+    });
+  }
+  function findStaff(id){
+    var f = staff.filter(function(s){ return s.id === String(id); });
+    return f.length ? f[0] : null;
+  }
+  function findTerm(id){
+    var f = terms.filter(function(t){ return t.id === String(id); });
+    return f.length ? f[0] : null;
+  }
+  function chiefOn(date){
+    var hit = null;
+    terms.forEach(function(t){ if (t.from <= date && (!hit || t.from > hit.from)) hit = t; });
+    return hit ? hit.name : '';
+  }
+  function push(action, detail, actor){
+    log.unshift({ at: stamp(), action:action, detail:detail, actor:actor || '' });
+  }
+  function master(){
+    return { staff:staffOut(), terms:terms.slice(), log:log.slice(0,60), today:todayIso };
+  }
+
+  /* 週の組み立て。土曜始まりはサーバーと同じ規則にしてある */
+  function weekTopOf(anchorIso){
+    var p = String(anchorIso).split('-');
+    var d = new Date(+p[0], +p[1]-1, +p[2]);
+    d.setDate(d.getDate() - ((d.getDay() - 6 + 7) % 7));
+    return d;
+  }
+  function daysOf(anchorIso){
+    var top = weekTopOf(anchorIso || todayIso), out = [];
+    for (var i=0;i<7;i++){
+      var d = new Date(top); d.setDate(top.getDate()+i);
+      out.push({ date: iso(d), dow: DOW[d.getDay()] });
+    }
+    return out;
+  }
+
+  var days = daysOf(todayIso);
+
+  days.forEach(function(d, i){
+    if (d.date >= todayIso) return;
+    store[d.date] = {
+      state: i === 0 ? 'approved' : 'saved',
+      roomTemp: 23.5 + i*0.4,
+      roomHumid: 46 + i,
+      coldTemp: 4.8 + i*0.3,
+      coldHumid: 52 + i,
+      rx: 74 + i*6,
+      inquiry: i % 3,
+      staff: ['関根 禎浩','山田 太郎','佐藤 花子'][i % 3],
+      savedAt: '19:'+(30+i),
+      admin: i === 0 ? '関根 禎浩' : '',
+      approvedAt: i === 0 ? '翌 09:10' : ''
+    };
+  });
+  if (days[3] && days[3].date < todayIso){
+    store[days[3].date] = { state:'editing', lockedBy:'佐藤 花子' };
+  }
+  // 管理基準を外れた日のサンプル(記録のある最後の日に入れる)
+  var ngDay = days.filter(function(d){
+    return store[d.date] && store[d.date].state !== 'editing'; }).pop();
+  if (ngDay) store[ngDay.date].coldTemp = 9.4;
+
+  /* 過去の週。ところどころ空けて「入力もれ」を再現しておく */
+  (function seedPast(){
+    for (var i=7;i<=60;i++){
+      var d = new Date(); d.setDate(d.getDate()-i);
+      var k = iso(d);
+      if (store[k]) continue;
+      if (i % 9 === 0 || i % 13 === 0) continue;          // ← 入力もれ
+      store[k] = {
+        state: (i % 4 === 0) ? 'saved' : 'approved',
+        roomTemp: 22 + (i % 5), roomHumid: 44 + (i % 8),
+        coldTemp: 4.2 + (i % 3) * 0.4, coldHumid: 50 + (i % 6),
+        rx: 60 + (i % 21), inquiry: i % 4,
+        staff: ['関根 禎浩','山田 太郎','佐藤 花子'][i % 3],
+        savedAt: '19:' + String(20 + (i % 30)).padStart(2,'0'),
+        admin: (i % 4 === 0) ? '' : '関根 禎浩',
+        approvedAt: (i % 4 === 0) ? '' : '翌 09:10'
+      };
+    }
+  })();
+
+  // 譲渡があった日のサンプル(記録のある最初の日に入れる)
+  var xDay = days.filter(function(d){
+    return store[d.date] && store[d.date].state !== 'editing'; })[0];
+  if (xDay){
+    Object.assign(store[xDay.date], {
+      xKind:'譲渡', xPartner:'あおぞら薬局 北24条店', xMaker:'第一三共',
+      xDrug:'ロキソニン錠60mg', xPack:'PTP 100錠', xQty:'1箱',
+      xLot:'A4K21', xExpiry:'2028-03'
+    });
+  }
+
+  function week(anchor){
+    var days = daysOf((anchor && anchor <= todayIso) ? anchor : todayIso);
+    return {
+      store:'くるむ薬局 札幌店',
+      today: todayIso,
+      weekStart: days[0].date,
+      me: null,
+      staff: staffOut(),
+      terms: terms.slice(),
+      auth: authMode === 'google'
+        ? { mode:'google',
+            email: demoRegistered ? 'sekine@kurumu.example.jp' : 'private.account@gmail.com',
+            name:  demoRegistered ? '関根 禎浩' : '',
+            registered: demoRegistered }
+        : { mode:'select' },
+      days: days.map(function(d){
+        var s = store[d.date] || { state:'empty' };
+        return Object.assign({ date:d.date, dow:d.dow,
+          rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
+          xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+          staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:'' }, s);
+      })
+    };
+  }
+
+  return {
+    setAuthMode: function(m){ authMode = m; },
+    setDemoRegistered: function(v){ demoRegistered = v; },
+
+    getWeekState: function(anchor){ return week(anchor); },
+
+    findMissing: function(span){
+      var n = Number(span) || 60, out = [];
+      for (var i=1;i<=n;i++){
+        var d = new Date(); d.setDate(d.getDate()-i);
+        var k = iso(d);
+        var r = store[k];
+        if (!r || r.state === 'editing'){
+          out.push({ date:k, dow:DOW[d.getDay()],
+                     state: r ? 'editing' : 'empty', lockedBy: r ? r.lockedBy : '' });
+        }
+      }
+      return { today: todayIso, span: n, days: out };
+    },
+
+    getPrintPreview: function(anchor){
+      var seals = {};
+      staff.forEach(function(x){ if (x.sealUrl) seals[x.name] = x.sealUrl; });
+      var w = week(anchor);
+      // 実物のテンプレートを模した寸法(本番はシートから読み取ります)
+      var layout = {
+        cols: 12, headRows: 2, rowsPerDay: 2,
+        widths: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+        heights: [42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42],
+        row1: ['日付\n営業時間','処方箋枚数','','疑義照会件数','','管理に関する事項',
+               '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],
+        sub: '譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/包装形態/譲渡数/Lot/使用期限',
+        unitRx: '枚', unitInq: '件', phTemp: '℃　/', phHumid: '%',
+        col: { DATE:1, RX:2, INQ:4, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
+               STAFF:11, ADMIN:12, NOTE:2 }
+      };
+      return {
+        layout: layout,
+        store:'くるむ薬局 札幌店',
+        start: w.days[0].date, end: w.days[6].date,
+        hours:'10:00〜20:00',
+        ranges:{ ROOM_TEMP:[1,30], ROOM_HUMID:[30,70], COLD_TEMP:[2,8], COLD_HUMID:null },
+        hasTemplate: true,
+        seals: seals,
+        rows: w.days.map(function(d){
+          var filled = d.state === 'saved' || d.state === 'approved';
+          var note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
+            .map(function(k){ return d[k]; }).filter(function(x){ return x; }).join('／');
+          return { date:d.date, dow:d.dow, hours:'10:00〜20:00',
+            rx:d.rx, inquiry:d.inquiry, note:note,
+            roomTemp:d.roomTemp, roomHumid:d.roomHumid,
+            coldTemp:d.coldTemp, coldHumid:d.coldHumid,
+            filled:filled, approved:d.state === 'approved',
+            admin: d.admin || chiefOn(d.date), staff:d.staff };
+        })
+      };
+    },
+
+    startExport: function(p){
+      var weeks = [], a = new Date(p.from), b = new Date(p.to);
+      while (a <= b){
+        weeks.push(a.toISOString().slice(0,10));
+        a.setDate(a.getDate() + 7);
+      }
+      job = { from:p.from, to:p.to, title:p.title, weeks:weeks, done:0,
+              state:'running', pdfUrl:'' };
+      return job;
+    },
+    runExportChunk: function(){
+      if (!job || job.state !== 'running') return job;
+      job.done = Math.min(job.weeks.length, job.done + 1);
+      if (job.done >= job.weeks.length){
+        job.state = 'done';
+        job.pdfUrl = 'https://drive.google.com/(プレビューでは実際のPDFは作られません)';
+      }
+      return job;
+    },
+    cancelExport: function(){ if (job) job.state = 'canceled'; return job; },
+
+    claimDay: function(p){
+      if (!store[p.date]) store[p.date] = { state:'editing', lockedBy:p.staff };
+      return week(p.date);
+    },
+    releaseDay: function(p){
+      var r = store[p.date];
+      if (r && r.state === 'editing' && r.lockedBy === p.staff) delete store[p.date];
+      return true;
+    },
+
+    saveDay: function(p){
+      var now = new Date();
+      store[p.date] = { state:'saved',
+        rx:p.rx, inquiry:p.inquiry,
+        roomTemp:p.roomTemp, roomHumid:p.roomHumid,
+        coldTemp:p.coldTemp, coldHumid:p.coldHumid,
+        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
+        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        staff:p.staff,
+        savedAt: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
+        admin:'', approvedAt:'' };
+      return week(p.date);
+    },
+
+    approveDay: function(p){
+      var r = store[p.date]; if (!r) throw new Error('記録がありません');
+      var now = new Date();
+      r.state = 'approved'; r.admin = p.admin;
+      r.approvedAt = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+      return week(p.date);
+    },
+
+    getStaffMaster: function(){ return master(); },
+
+    addStaff: function(p){
+      var name = String(p.name || '').trim();
+      if (!name) throw new Error('氏名を入力してください');
+      if (staff.some(function(s){ return s.name === name; }))
+        throw new Error(name + ' さんは既に名簿にあります');
+      staff.push({ id:'s'+(seq++), name:name, active:true });
+      push('担当者を追加', name, p.actor);
+      return master();
+    },
+
+    updateStaff: function(p){
+      var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
+      if (p.active === false && chiefOn(todayIso) === s.name)
+        throw new Error('現在の管理薬剤師です。先に交代を登録してください');
+      if (p.active !== undefined){
+        s.active = !!p.active;
+        push(s.active ? '担当者を復帰' : '担当者を退職', s.name, p.actor);
+      }
+      return master();
+    },
+
+    removeStaff: function(p){
+      var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
+      if (records(s.name) > 0)
+        throw new Error('日報に記録が残っているため削除できません。退職にしてください');
+      if (terms.some(function(t){ return t.staffId === s.id; }))
+        throw new Error('管理薬剤師の履歴が残っているため削除できません。退職にしてください');
+      staff = staff.filter(function(x){ return x.id !== s.id; });
+      push('担当者を削除', s.name, p.actor);
+      return master();
+    },
+
+    setSeal: function(p){
+      var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
+      if (!/^data:image\/png;base64,/.test(p.dataUrl || ''))
+        throw new Error('画像を読み込めませんでした');
+      s.sealUrl = p.dataUrl;                    // 本番ではDriveに保存してファイルIDを持つ
+      push('印影を登録', s.name, p.actor);
+      return master();
+    },
+
+    removeSeal: function(p){
+      var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
+      delete s.sealUrl;
+      push('印影を削除', s.name, p.actor);
+      return master();
+    },
+
+    setChief: function(p){
+      var s = findStaff(p.staffId); if (!s) throw new Error('名簿にありません');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.from)) throw new Error('就任日の形式が正しくありません');
+      if (terms.some(function(t){ return t.from === p.from; }))
+        throw new Error('同じ就任日の登録が既にあります');
+      var prev = chiefOn(p.from);
+      terms.push({ id:'t'+(tseq++), staffId:s.id, name:s.name, from:p.from });
+      push('管理薬剤師の交代',
+        (prev ? prev + ' → ' : '') + s.name + '(' + p.from + ' から)', p.actor);
+      return master();
+    },
+
+    updateTerm: function(p){
+      var t = findTerm(p.id); if (!t) throw new Error('任期がありません');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(p.from)) throw new Error('就任日の形式が正しくありません');
+      if (terms.some(function(x){ return x.id !== t.id && x.from === p.from; }))
+        throw new Error('同じ就任日の登録が既にあります');
+      var before = t.from;
+      t.from = p.from;
+      push('就任日を変更', t.name + '：' + before + ' → ' + p.from, p.actor);
+      return master();
+    },
+
+    removeTerm: function(p){
+      var t = findTerm(p.id); if (!t) throw new Error('任期がありません');
+      if (terms.length === 1) throw new Error('管理薬剤師が0人になります');
+      terms = terms.filter(function(x){ return x.id !== t.id; });
+      push('任期を削除', t.name + '(' + t.from + ' 〜)', p.actor);
+      return master();
+    }
+  };
+})();
+
+/* プレビューでだけ、認証方式(プルダウン / Googleアカウント)を切り替えて見比べられるようにする */
+if (!IS_GAS){
+  document.getElementById('demoToggle').addEventListener('click', function(){
+    var toGoogle = (S.auth.mode !== 'google');
+    MOCK.setAuthMode(toGoogle ? 'google' : 'select');
+    MOCK.setDemoRegistered(true);
+    this.textContent = toGoogle ? '担当プルダウンの表示に戻す' : 'Googleアカウント方式の表示を見る';
+    S.sel = null; S.editing = false;
+    boot();
+  });
+}
+
+boot();
+</script>
+</body>
+</html>

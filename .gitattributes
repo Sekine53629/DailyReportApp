@@ -1,0 +1,2 @@
+# GAS / Web files are LF everywhere (Tier 1: LF for non Windows-native files)
+* text=auto eol=lf
