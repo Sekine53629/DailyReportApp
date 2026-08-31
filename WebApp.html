@@ -3754,7 +3754,11 @@ var MOCK = (function(){
     var vers = fixOfMock(month);
     var live = vers.filter(function(x){ return x.alive; });
     var reasons = [];
-    if (mEnd >= todayIso) reasons.push('その月がまだ終わっていません');
+    // 最終日当日は確定できる（営業終了時に締めるため）
+    if (mEnd > todayIso){
+      var e = mEnd.split('-');
+      reasons.push('確定できるのは最終日(' + (+e[1]) + '/' + (+e[2]) + ')からです');
+    }
     if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
     var un = stat.filled - stat.approved;
     if (un) reasons.push('未承認が ' + un + ' 日あります');

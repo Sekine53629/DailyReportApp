@@ -2718,6 +2718,12 @@ function monthEnd_(iso) {
   return Utilities.formatDate(new Date(+p[0], +p[1], 0), CFG.TZ, 'yyyy-MM-dd');
 }
 
+/** 'yyyy-MM-dd' を '8/31' にする(画面に出す短い表記) */
+function mdOf_(iso) {
+  const p = String(iso || '').split('-');
+  return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : String(iso || '');
+}
+
 /** 管理基準を外れている項目を並べる */
 function rangeAlerts_(d) {
   const out = [];
@@ -2966,7 +2972,8 @@ function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function ()
    監査で「これは当時のものです」と言えなくなるため、月が締まった時点で
    1回だけPDFに焼き、それを残します。
 
-   ・確定できるのは「月が終わっていて、未記録が無く、全日が承認済み」のときだけ
+   ・確定できるのは「最終日を迎えていて、未記録が無く、全日が承認済み」のときだけ
+     最終日の営業終了時に締めるので、最終日当日から押せます
    ・訂正が出たら、承認を解除して直し、もう一度確定する。
      前の版は消さず、新しい版として積み増します(v1, v2, …)
    ・変更履歴シートに「何をなぜ直したか」が残るので、版と履歴が対応します
@@ -3041,7 +3048,10 @@ function freezeCheck_(month, idx, terms) {
   const live = versions.filter(function (x) { return x.alive; });
   const reasons = [];
 
-  if (stat.end >= today_()) reasons.push('その月がまだ終わっていません');
+  // 最終日の営業終了時に締める運用なので、最終日当日は確定できます
+  if (stat.end > today_()) {
+    reasons.push('確定できるのは最終日(' + mdOf_(stat.end) + ')からです');
+  }
   if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
   const unapproved = stat.filled - stat.approved;
   if (unapproved) reasons.push('未承認が ' + unapproved + ' 日あります');
