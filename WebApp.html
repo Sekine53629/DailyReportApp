@@ -608,16 +608,23 @@ button,input,select{font:inherit;color:inherit}
 .pvwrap.fit table.pv{margin:0}
 .pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
 .pvscale:empty{display:none}
-table.pv{border-collapse:collapse;table-layout:fixed;font-size:10px}
+/* 書体は帳票(スプレッドシート)側に合わせる。
+   画面のプレビューと刷り上がりの印象をそろえるため、
+   ここだけは画面用の書体を使わない */
+table.pv{
+  border-collapse:collapse;table-layout:fixed;font-size:10px;
+  font-family:Arial,"Yu Gothic","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+  font-variant-numeric:tabular-nums;
+}
 table.pv th,table.pv td{border:1px solid #2b3330;padding:2px 4px;vertical-align:middle}
-table.pv th{background:#f4f6f5;font-family:var(--disp);font-size:8.5px;text-align:center;
+table.pv th{background:#f4f6f5;font-size:8.5px;text-align:center;
   font-weight:700;line-height:1.3}
 table.pv th.subhd{font-weight:400;font-size:7.5px;color:#3d4a45}
 table.pv td.dt{text-align:center;line-height:1.35;font-size:8.5px}
 table.pv td.dt b{display:block;font-size:10px}
-table.pv td.n{text-align:right;font-family:var(--mono);font-size:10.5px}
+table.pv td.n{text-align:right;font-size:10.5px}
 table.pv td.u{text-align:left;font-size:7.5px;color:#3d4a45}
-table.pv td.e{text-align:right;font-family:var(--mono);font-size:9.5px;white-space:nowrap}
+table.pv td.e{text-align:right;font-size:9.5px;white-space:nowrap}
 table.pv td.e.ng{color:#c42a26;font-weight:700}
 table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
 table.pv td.st{text-align:center;padding:1px}
@@ -756,7 +763,7 @@ table.pv td.dt .rowact:empty{display:none}
 table.pv td.ed{padding:0;background:#fffdf3}
 table.pv td.ed input{
   width:100%;border:0;background:transparent;padding:3px 4px;
-  font-family:var(--mono);font-size:10.5px;text-align:right;color:#111614;
+  font-family:inherit;font-size:10.5px;text-align:right;color:#111614;
 }
 table.pv td.ed input:focus{outline:2px solid #0f766e;outline-offset:-2px;background:#fff}
 table.pv td.nt.ed{padding:1px}
@@ -786,20 +793,57 @@ table.pv td.st i.pend{
 .lead-note{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.7}
 
 /* ============================================================
-   印刷(Ctrl+P で記録簿をそのまま刷るとき)
-   PDF出力ボタンは帳票テンプレート経由なので、こちらは補助的な経路。
+   印刷
+   画面に出ている帳票を、そのまま紙に落とします。
+   サーバーを介さないので待ち時間がありません。
+   ドライブにPDFを残したいときは「PDFを出力」を使ってください。
    ============================================================ */
 @media print{
+  /* 画面のための部品は紙に出さない */
   .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
-  #boot,#demoBar,.footnote{display:none !important}
-  body{background:#fff}
-  .shell{padding:0}
-  .lgview{max-width:none;padding:0}
-  .lg-week{page-break-after:always;break-after:page;margin:0}
+  #boot,#demoBar,.footnote,.presets,.range,.pvnote,.pvscale,
+  .progress,.donebox,.actions{display:none !important}
+
+  body{background:#fff;padding:0}
+  .shell{padding:0;margin:0}
+  .lgview{max-width:none;padding:0;margin:0}
+  .card{border:0;box-shadow:none;background:#fff}
+  #viewExport .card-bd{padding:0}
+
+  /* 1週 = 1ページ */
+  .lg-week{page-break-after:always;break-after:page;margin:0;width:auto;max-width:none}
   .lg-week:last-child{page-break-after:auto;break-after:auto}
   .lg-week > h3{display:none}
-  .lg-sheet{border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important}
-  table.pv td.st i.pend{display:none}
+  .lg-sheet,.pvwrap{
+    border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important;
+    width:auto;max-width:none;height:auto !important;margin:0;
+  }
+
+  /* 罫線と見出しの地色。既定では背景が落ちるので、出すよう指定する。
+     倍率は beforeprint で実測した値(--pscale)を当てる */
+  table.pv{
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    transform:scale(var(--pscale,1));transform-origin:top left;margin:0;
+  }
+  table.pv th{background:#f4f6f5 !important}
+  table.pv td.e.ng{color:#c42a26 !important}
+
+  /* 画面でしか使わない色分けは紙に出さない(帳票の見た目を崩さないため) */
+  table.pv tr.lg-out td,table.pv tr.lg-fut td,table.pv tr.lg-dirty td,
+  table.pv tr.lg-miss td.dt,table.pv tr.lg-appr td.dt,
+  table.pv td.ed{background:transparent !important}
+  table.pv tr.lg-saving td{opacity:1}
+  table.pv td.st i.pend,table.pv td.dt .rowact{display:none !important}
+
+  /* 編集中でも、紙には値だけが出るようにする */
+  table.pv td.ed{padding:2px 4px}
+  table.pv td.ed input,.stsel,.notebtn{
+    border:0 !important;background:transparent !important;
+    -webkit-appearance:none;appearance:none;box-shadow:none !important;
+  }
+  .notebtn{padding:0 !important;font-size:8px;color:#111614 !important}
+  .notebtn.empty{visibility:hidden}   /* 「＋ 譲渡・譲受を記入」は紙に出さない */
+
   @page{size:A4 landscape;margin:8mm}
 }
 </style>
@@ -992,7 +1036,8 @@ table.pv td.st i.pend{
     <span class="lg-dirtycnt" id="lgDirty"></span>
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
-    <button class="btn ghost" id="lgPrint">PDFを出力</button>
+    <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
+    <button class="btn ghost" id="lgPrint" title="ドライブにPDFを保存します（1週あたり数秒）">PDFを出力</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
@@ -2239,7 +2284,9 @@ function renderPrint(){
      + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
 
   h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
-     + '<p class="pvscale" id="pvScale"></p>';
+     + '<p class="pvscale" id="pvScale"></p>'
+     + '<div class="actions"><button class="btn ghost" id="pvPaper">'
+     + 'この週をそのまま印刷</button></div>';
 
   if (P.job && P.job.state === 'running'){
     var pct = Math.round(P.job.done / P.job.weeks.length * 100);
@@ -2298,6 +2345,49 @@ window.addEventListener('resize', function(){
   if (VIEW === 'export') fitPreview_();
 });
 
+/* ============================================================
+   紙に出す
+   画面に描いてある帳票をそのまま印刷します。サーバーを介さないので
+   待ち時間がありません。PDFをドライブに残したいときだけ、
+   帳票テンプレート経由の「PDFを出力」を使ってください。
+   ============================================================ */
+
+/** 紙に入る幅を実測して、はみ出す分だけ縮める倍率を返す。
+ *  mm から px への換算はブラウザや設定で変わるので、実際に測ります。 */
+function printScale_(){
+  var probe = document.createElement('div');
+  // A4横 297mm から左右の余白 8mm を引いた幅
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;width:281mm';
+  document.body.appendChild(probe);
+  var avail = probe.offsetWidth;
+  document.body.removeChild(probe);
+
+  // いま出ている画面の帳票を測る。隠れている方は幅が0になってしまうため
+  var tbl = document.querySelector(
+    VIEW === 'export' ? '#pvBody table.pv' : '#lgBody table.pv');
+  if (!tbl || !avail) return 1;
+  var w = tbl.offsetWidth;
+  if (!w || w <= avail) return 1;      // 収まるなら原寸のまま
+  return avail / w;
+}
+
+function printPaper_(){
+  // 描き直した直後に呼ばれることがあるので、反映を待ってから
+  setTimeout(function(){ window.print(); }, 60);
+}
+
+window.addEventListener('beforeprint', function(){
+  // 画面用の縮小(fitPreview_)は外し、紙用の倍率に入れ替える
+  var t = document.querySelector('#pvWrap table.pv');
+  if (t) t.style.transform = '';
+  document.documentElement.style.setProperty('--pscale', printScale_().toFixed(4));
+});
+
+window.addEventListener('afterprint', function(){
+  document.documentElement.style.removeProperty('--pscale');
+  if (VIEW === 'export') fitPreview_();
+});
+
 function preset(label, key){
   return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
 }
@@ -2320,6 +2410,11 @@ function wirePrint_(){
       P.job = null;
       loadPreview();
     });
+  });
+  var paper = document.getElementById('pvPaper');
+  if (paper) paper.addEventListener('click', function(){
+    if (!P.preview || !P.preview.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+    printPaper_();
   });
   var go = document.getElementById('pvGo');
   if (go) go.addEventListener('click', startPrint_);
@@ -2807,7 +2902,8 @@ function lgTable_(week){
 
     var note = ed
       ? '<td class="nt ed" colspan="' + span + '">'
-        + '<button class="notebtn" data-act="xfer" data-date="' + r.date + '">'
+        + '<button class="notebtn' + (lgNoteOf(v) ? '' : ' empty') + '"'
+        + ' data-act="xfer" data-date="' + r.date + '">'
         + (lgNoteOf(v) ? esc(lgNoteOf(v)) : '＋ 譲渡・譲受を記入') + '</button></td>'
       : '<td class="nt" colspan="' + span + '">' + esc(lgNoteOf(v)) + '</td>';
 
@@ -2913,14 +3009,30 @@ function lgRender(){
 
   document.getElementById('lgFoot').innerHTML =
       '<div class="lg-note"><b>この画面について</b>'
-    + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。'
-    + '「PDFを出力」を押すと、ドライブの「業務日報_出力」フォルダに'
-    + d.monthLabel + '分（' + d.weeks.length + 'ページ）が保存されます。<br>'
+    + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。<br>'
+    + '<b style="display:inline">印刷</b>… この画面をそのまま紙に出します。'
+    + 'サーバーを介さないのですぐ出ます（' + d.weeks.length + 'ページ）。<br>'
+    + '<b style="display:inline">PDFを出力</b>… ドライブの「業務日報_出力」フォルダに'
+    + d.monthLabel + '分を保存します。控えを残すときはこちら（1週あたり数秒）。<br>'
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
   lgRenderExport();
   lgBar();
+}
+
+/* ---------- 印刷(画面をそのまま紙へ) ----------
+   編集中は入力欄のまま刷られてしまうので、閲覧に戻してから出します。 */
+function lgPaper(){
+  var d = LG.data;
+  if (!d) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+  if (LG.edit){
+    LG.edit = false;
+    lgRender();
+  }
+  printPaper_();
 }
 
 /* ---------- PDF出力(既存の帳票出力をそのまま呼ぶ) ---------- */
@@ -2986,6 +3098,7 @@ function lgRenderExport(){
 document.getElementById('navInput').addEventListener('click', function(){ showView('input'); });
 document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
 document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
+document.getElementById('lgPaper').addEventListener('click', lgPaper);
 document.getElementById('lgPrint').addEventListener('click', lgExport);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
