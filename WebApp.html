@@ -608,8 +608,62 @@ button,input,select{font:inherit;color:inherit}
 .pvwrap.fit table.pv{margin:0}
 .pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
 .pvscale:empty{display:none}
-#pvJob:empty{display:none}
-#pvJob{margin-bottom:14px}
+/* ============================================================
+   出力の進み具合(画面下に固定)
+   長い出力では画面を見ていられないので、スクロールしても
+   画面を移動しても、いつでも残り時間が見えるようにする。
+   ============================================================ */
+.jobbar[hidden]{display:none}
+.jobbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:55;
+  background:color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-top:1px solid var(--line);
+  box-shadow:0 -6px 20px -10px rgba(22,33,29,.35);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.jb-in{
+  max-width:1200px;margin:0 auto;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+}
+.jb-main{flex:1;min-width:240px}
+.jb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.jb-head b{font-family:var(--disp);font-size:13px;font-weight:700;color:var(--ink-2)}
+.jb-head span{
+  font-family:var(--mono);font-size:12px;color:var(--muted);
+  font-variant-numeric:tabular-nums;
+}
+.jb-bar{
+  height:8px;background:var(--surface-2);border-radius:999px;
+  overflow:hidden;margin:6px 0 5px;
+}
+.jb-bar i{
+  display:block;height:100%;background:var(--accent);width:0;
+  transition:width .3s ease;
+}
+.jb-time{
+  font-size:11.5px;color:var(--muted);line-height:1.6;
+  font-variant-numeric:tabular-nums;
+}
+.jb-time b{color:var(--ink-2);font-weight:700}
+.jb-act{display:flex;gap:8px;flex:0 0 auto}
+.jb-act .btn{margin-top:0}
+
+/* 終わったとき・失敗したとき */
+.jobbar.done{border-top-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.jobbar.done .jb-head b{color:var(--ok)}
+.jobbar.err{border-top-color:color-mix(in srgb,var(--crit) 45%,transparent)}
+.jobbar.err .jb-head b{color:var(--crit)}
+.jobbar a{color:var(--accent);font-weight:700}
+
+/* 帯のぶんだけ本文を持ち上げ、通知バーもぶつからない位置へ */
+body.jobbar-on{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+body.jobbar-on .toast{bottom:calc(104px + env(safe-area-inset-bottom))}
+
+@media (max-width:520px){
+  .jb-act{width:100%}
+  .jb-act .btn{flex:1}
+}
 /* 書体は帳票(スプレッドシート)側に合わせる。
    画面のプレビューと刷り上がりの印象をそろえるため、
    ここだけは画面用の書体を使わない */
@@ -804,7 +858,8 @@ table.pv td.st i.pend{
   /* 画面のための部品は紙に出さない */
   .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
   #boot,#demoBar,.footnote,.presets,.range,.pvnote,.pvscale,
-  .progress,.donebox,.actions{display:none !important}
+  .progress,.donebox,.actions,.jobbar{display:none !important}
+  body.jobbar-on{padding-bottom:0}
 
   body{background:#fff;padding:0}
   .shell{padding:0;margin:0}
@@ -1048,7 +1103,6 @@ table.pv td.st i.pend{
 
   <div class="lg-stats" id="lgStats"></div>
   <div class="lg-alerts" id="lgAlerts" hidden></div>
-  <div id="lgExport"></div>
   <div id="lgBody"><div class="skeleton"></div></div>
   <div id="lgFoot"></div>
 </section>
@@ -1057,8 +1111,6 @@ table.pv td.st i.pend{
   <div class="lg-bar">
     <div class="ttl"><b>帳票の出力</b><span>期間を選んでPDFにします</span></div>
   </div>
-  <!-- 出力の進み具合。プレビューを作り直しても消えないよう外に置く -->
-  <div id="pvJob"></div>
   <div class="card"><div class="card-bd" id="pvBody"></div></div>
 </section>
 
@@ -1091,6 +1143,21 @@ table.pv td.st i.pend{
      帳票の出力
      期間を選び、帳票テンプレート経由でPDFにする画面。
      ============================================================ -->
+<!-- 出力の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
+<div class="jobbar" id="jobBar" hidden role="status" aria-live="polite">
+  <div class="jb-in">
+    <div class="jb-main">
+      <div class="jb-head">
+        <b id="jobTitle">帳票の出力</b>
+        <span id="jobStep"></span>
+      </div>
+      <div class="jb-bar"><i id="jobFill"></i></div>
+      <div class="jb-time" id="jobTime"></div>
+    </div>
+    <div class="jb-act" id="jobAct"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1194,12 +1261,7 @@ function canLeaveView_(name){
     LG.dirty = {};
     LG.edit = false;
   }
-  // 出力中は、進み具合を出している画面から離れないようにする
-  if (JOB.busy && ((name === 'ledger' && JOB.box === 'lgExport') ||
-                   (name === 'export' && JOB.box === 'pvJob'))){
-    toast('PDFの出力中です。終わるまでお待ちください', true);
-    return false;
-  }
+  // 出力中でも移動してかまいません。進み具合は画面下の帯に出続けます
   return true;
 }
 
@@ -1226,6 +1288,7 @@ function boot(){
     S.terms = d.terms || [];                 // [{id,staffId,name,from}] 管理薬剤師の任期
     S.auth = d.auth || { mode:'select' };
     applyPaper_(d.paper);        // 用紙・向き・余白をサーバーに合わせる
+    EXPORT.secPerWeek = (d.exportRate && d.exportRate.secPerWeek) || 0;
     S.me = decideMe(d);
     document.getElementById('brandName').textContent = d.store;
     renderIdentity();
@@ -2531,12 +2594,16 @@ function printTable_(d){
    どのボタンから押しても、必ずこの節を通ります。
      記録簿の「印刷」          → printPaper_('ledger')
      出力画面の「この週を…印刷」→ printPaper_('export')
-     記録簿の「PDFを出力」      → startExportJob_({ box:'lgExport', … })
-     出力画面の「この期間を…」  → startExportJob_({ box:'pvJob', … })
+     記録簿の「PDFを出力」      → startExportJob_({ … })  表示中の月ぜんぶ
+     出力画面の「この期間を…」  → startExportJob_({ … })  選んだ期間
 
    用紙・向き・余白はサーバーの CFG.PDF が唯一の出どころです。起動時に
    受け取って印刷用のCSSにも当てるので、ブラウザ印刷とPDF出力で
    刷り上がりが食い違いません。
+
+   PDFの進み具合は、どちらから始めても画面下に固定した帯に出ます。
+   長い期間だと数十分かかることがあるので、スクロールしても画面を
+   移動しても、残り時間が見えるようにしています。
    ============================================================ */
 
 /* ---------- 紙の設定 ---------- */
@@ -2625,10 +2692,60 @@ window.addEventListener('afterprint', function(){
    1回の呼び出しで何週分もまとめて作るため、そのあいだ画面は止まって見えます。
    週ごとに呼び分けると下準備が増えて全体は遅くなるので、作るのはまとめたまま、
    進み具合だけを別に問い合わせてバーを動かします。
-   getExportStatus は保存済みの進捗を読むだけなので、出力は遅くなりません。 */
-var JOB = { data:null, busy:false, box:'pvJob', timer:null };
+   getExportStatus は保存済みの進捗を読むだけなので、出力は遅くなりません。
 
-/** o = { from, to, title, hasTemplate, box } */
+   進み具合は画面下に固定した帯に出します。長い期間だと数十分かかることが
+   あるので、スクロールしても画面を移動しても、残り時間が見えるようにしています。 */
+var JOB = { data:null, busy:false, timer:null, tick:null, shell:'', at0:0 };
+
+/** 前回までの実測(1週あたり何秒)。始める前の見込みに使います */
+var EXPORT = { secPerWeek: 0 };
+
+/** 秒を「1時間20分」「3分5秒」のような読める形にする */
+function humanSec_(sec){
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + '秒';
+  var m = Math.floor(sec / 60), r = sec % 60;
+  if (m < 60) return m + '分' + (r ? r + '秒' : '');
+  var h = Math.floor(m / 60);
+  m = m % 60;
+  return h + '時間' + (m ? m + '分' : '');
+}
+
+/** 時刻を HH:MM で */
+function clock_(d){
+  return String(d.getHours()).padStart(2, '0') + ':'
+       + String(d.getMinutes()).padStart(2, '0');
+}
+
+/** 始める前の見込み。実績が無いうちは出しません */
+function estimateSec_(weeks){
+  return EXPORT.secPerWeek > 0 ? EXPORT.secPerWeek * weeks : 0;
+}
+
+/** 走っているジョブの経過と残りを見積もる */
+function jobEta_(j){
+  var total = (j.weeks && j.weeks.length) || 0;
+  var done  = j.done || 0;
+  var out = { total:total, done:done, pct: total ? Math.round(done / total * 100) : 0,
+              elapsed:0, remain:0, at:null };
+
+  // 開始時刻はサーバーの値を使い、無ければ押した時刻で代用する
+  var t0 = j.startedAt ? new Date(j.startedAt).getTime() : JOB.at0;
+  if (!t0) return out;
+  out.elapsed = (Date.now() - t0) / 1000;
+  if (out.elapsed < 0) out.elapsed = 0;
+
+  // 1週でも終わっていれば実測から、まだなら前回までの実績から見積もる
+  var per = done > 0 ? (out.elapsed / done) : EXPORT.secPerWeek;
+  if (per > 0 && total > done){
+    out.remain = per * (total - done);
+    out.at = new Date(Date.now() + out.remain * 1000);
+  }
+  return out;
+}
+
+/** o = { from, to, title, hasTemplate } */
 function startExportJob_(o){
   if (JOB.busy){
     toast('ほかの出力を実行中です。終わるまでお待ちください', true);
@@ -2638,12 +2755,17 @@ function startExportJob_(o){
   if (!o.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
 
   var weeks = weekCount_(o.from, o.to);
+  var est = estimateSec_(weeks);
   if (!confirm(jp(o.from) + ' 〜 ' + jp(o.to) + ' の ' + weeks + ' 週分をPDFにします。\n'
+      + (est ? '前回までの実績から、およそ ' + humanSec_(est) + ' かかる見込みです。\n' : '')
       + 'ドライブの「業務日報_出力」フォルダに保存します。\nよろしいですか？')) return;
 
   JOB.busy = true;
-  JOB.box  = o.box;
-  JOB.data = { state:'running', done:0, weeks:new Array(weeks), title:o.title };
+  JOB.at0 = Date.now();
+  JOB.data = {
+    state:'running', done:0, weeks:new Array(weeks), title:o.title,
+    startedAt: new Date().toISOString()
+  };
   renderJob_();
 
   call('startExport', [{ from:o.from, to:o.to, title:o.title, actor:S.me }], function(job){
@@ -2673,13 +2795,17 @@ function pumpJob_(){
 function endJob_(){
   JOB.busy = false;
   stopPollJob_();
+  stopTick_();
 }
 
 function cancelJob_(){
+  if (!confirm('出力を中止します。ここまでの分は保存されません。よろしいですか？')) return;
   call('cancelExport', [], function(){
     endJob_(); JOB.data = null; renderJob_(); toast('中止しました');
   }, function(e){ endJob_(); fail(e); });
 }
+
+function closeJob_(){ JOB.data = null; renderJob_(); }
 
 /* 作っているあいだの進み具合だけを別に問い合わせる */
 function pollJob_(){
@@ -2699,42 +2825,95 @@ function stopPollJob_(){
   if (JOB.timer){ clearTimeout(JOB.timer); JOB.timer = null; }
 }
 
-/** 進み具合の表示。記録簿と出力画面で置き場所だけが違う */
+/* サーバーへ聞くのは2秒おきでも、経過時間は毎秒動かしたい */
+function startTick_(){
+  stopTick_();
+  JOB.tick = setInterval(function(){
+    if (!JOB.data || JOB.data.state !== 'running'){ stopTick_(); return; }
+    paintJob_();
+  }, 1000);
+}
+
+function stopTick_(){
+  if (JOB.tick){ clearInterval(JOB.tick); JOB.tick = null; }
+}
+
+/** 帯の枠組み。状態が変わったときだけ作り直す(ボタンを付け直さないため) */
 function renderJob_(){
-  ['lgExport', 'pvJob'].forEach(function(id){
-    var el = document.getElementById(id);
-    if (el && id !== JOB.box) el.innerHTML = '';
-  });
-
-  var box = document.getElementById(JOB.box);
-  if (!box) return;
+  var bar = document.getElementById('jobBar');
   var j = JOB.data;
-  if (!j){ box.innerHTML = ''; return; }
 
-  if (j.state === 'running'){
-    var total = (j.weeks && j.weeks.length) || 1;
-    var pct = Math.round(j.done / total * 100);
-    box.innerHTML = '<div class="progress"><div class="bar"><i style="width:' + pct + '%"></i></div>'
-      + '<div class="txt">' + j.done + ' / ' + total + ' 週 完了'
-      + '（この画面を開いたまま少しお待ちください）</div></div>'
-      + '<div class="actions"><button class="btn ghost" id="jobCancel">中止する</button></div>';
-    var cx = document.getElementById('jobCancel');
-    if (cx) cx.addEventListener('click', cancelJob_);
-
-  } else if (j.state === 'done'){
-    box.innerHTML = '<div class="donebox"><b>PDFを出力しました</b>'
-      + esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）を'
-      + 'ドライブの「業務日報_出力」フォルダに保存しました。'
-      + '<div style="margin-top:6px"><a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a></div>'
-      + '</div>';
-
-  } else if (j.state === 'error'){
-    box.innerHTML = '<div class="blockmsg"><div><b>出力できませんでした</b>'
-      + esc(j.message || '') + '</div></div>';
-
-  } else {
-    box.innerHTML = '';
+  if (!j){
+    bar.hidden = true;
+    document.body.classList.remove('jobbar-on');
+    JOB.shell = '';
+    stopTick_();
+    return;
   }
+
+  bar.hidden = false;
+  document.body.classList.add('jobbar-on');
+  bar.classList.toggle('done', j.state === 'done');
+  bar.classList.toggle('err',  j.state === 'error');
+
+  if (JOB.shell !== j.state){
+    JOB.shell = j.state;
+    var act = document.getElementById('jobAct');
+    if (j.state === 'running'){
+      act.innerHTML = '<button class="btn ghost" id="jobCancel">中止する</button>';
+      document.getElementById('jobCancel').addEventListener('click', cancelJob_);
+      startTick_();
+    } else {
+      act.innerHTML = '<button class="btn ghost" id="jobClose">閉じる</button>';
+      document.getElementById('jobClose').addEventListener('click', closeJob_);
+      stopTick_();
+    }
+  }
+  paintJob_();
+}
+
+/** 帯の中身。1秒ごとにここだけ書き換える */
+function paintJob_(){
+  var j = JOB.data;
+  if (!j) return;
+  var ttl  = document.getElementById('jobTitle');
+  var step = document.getElementById('jobStep');
+  var fill = document.getElementById('jobFill');
+  var time = document.getElementById('jobTime');
+
+  if (j.state === 'done'){
+    ttl.textContent = 'PDFを出力しました';
+    step.textContent = esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）';
+    fill.style.width = '100%';
+    time.innerHTML = 'ドライブの「業務日報_出力」フォルダに保存しました。'
+      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>';
+    return;
+  }
+  if (j.state === 'error'){
+    ttl.textContent = '出力できませんでした';
+    step.textContent = '';
+    fill.style.width = '0';
+    time.textContent = j.message || '';
+    return;
+  }
+
+  var e = jobEta_(j);
+  ttl.textContent = (j.title || '帳票') + ' を作成中';
+  step.textContent = e.done + ' / ' + e.total + ' 週（' + e.pct + '%）';
+  fill.style.width = e.pct + '%';
+
+  var line = '経過 <b>' + humanSec_(e.elapsed) + '</b>';
+  if (e.remain > 0){
+    line += ' ／ 残り およそ <b>' + humanSec_(e.remain) + '</b>'
+          + '（終わる目安 ' + clock_(e.at) + '）';
+  } else if (e.done === 0){
+    line += ' ／ 残り時間を計算しています…';
+  } else {
+    line += ' ／ まもなく終わります';
+  }
+  line += '<br>この画面を閉じると出力は止まります。開いたままにしてください'
+        + '（ほかの画面へ移っても続きます）。';
+  time.innerHTML = line;
 }
 
 /** 表題。1か月に収まるなら「2026年8月分」、またぐなら日付でつなぐ */
@@ -2750,8 +2929,7 @@ function jobTitle_(from, to){
 function startPrint_(){
   startExportJob_({
     from: P.from, to: P.to, title: jobTitle_(P.from, P.to),
-    hasTemplate: !!(P.preview && P.preview.hasTemplate),
-    box: 'pvJob'
+    hasTemplate: !!(P.preview && P.preview.hasTemplate)
   });
 }
 
@@ -2762,8 +2940,7 @@ function lgExport(){
   if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
   startExportJob_({
     from: d.monthStart, to: d.monthEnd, title: d.monthLabel + '分',
-    hasTemplate: d.hasTemplate,
-    box: 'lgExport'
+    hasTemplate: d.hasTemplate
   });
 }
 
@@ -3178,7 +3355,6 @@ function lgRender(){
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
-  renderJob_();
   lgBar();
 }
 
@@ -3414,6 +3590,7 @@ var MOCK = (function(){
       today: todayIso,
       weekStart: days[0].date,
       paper: { page:'A4', landscape:true, marginIn:0.4 },
+      exportRate: { secPerWeek: 6 },
       me: null,
       staff: staffOut(),
       terms: terms.slice(),
@@ -3620,6 +3797,7 @@ var MOCK = (function(){
         a.setDate(a.getDate() + 7);
       }
       job = { from:p.from, to:p.to, title:p.title, weeks:weeks, done:0,
+              startedAt: new Date().toISOString(),
               state:'running', pdfUrl:'' };
       return job;
     },

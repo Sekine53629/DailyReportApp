@@ -883,6 +883,8 @@ function weekPayload_(anchorIso) {
       landscape: CFG.PDF.LANDSCAPE,
       marginIn: CFG.PDF.MARGIN_IN
     },
+    // 前回までの実測。出力を始める前に「およそ○分」を出すために渡します
+    exportRate: { secPerWeek: Number(PROP.getProperty(PRINT.RATE_KEY)) || 0 },
     days: days
   };
 }
@@ -1192,6 +1194,7 @@ function sweepStaleLocks() {
 
 const PRINT = {
   JOB_KEY: 'PRINT_JOB',
+  RATE_KEY: 'EXPORT_SEC_PER_WEEK',   // 1週あたりの実測(次回の見込みに使う)
   OUT_FOLDER: '業務日報_出力',
   TIME_BUDGET_MS: 4.5 * 60 * 1000,   // 6分の上限に対して余裕を取る
   DAY_ROWS: 7
@@ -1743,6 +1746,28 @@ function runExportChunk() {
   });
 }
 
+/**
+ * 1週あたりに何秒かかったかを覚えておく。
+ * 次に出力を始めるとき「およそ○分かかります」と先に出すために使います。
+ * 極端な値は捨て、前回の値と半分ずつ混ぜてならします。
+ *
+ * 画面から出したときは往復の待ちも含んだ実測、エディタから手で
+ * 実行したときは含まれません。あくまで目安として扱ってください。
+ */
+function rememberRate_(job) {
+  try {
+    const weeks = (job.weeks || []).length;
+    if (!weeks || !job.startedAt) return;
+    const sec = (Date.now() - new Date(job.startedAt).getTime()) / 1000 / weeks;
+    if (!isFinite(sec) || sec <= 0 || sec > 600) return;
+    const prev = Number(PROP.getProperty(PRINT.RATE_KEY)) || 0;
+    const next = prev ? (prev * 0.5 + sec * 0.5) : sec;
+    PROP.setProperty(PRINT.RATE_KEY, String(Math.round(next * 10) / 10));
+  } catch (e) {
+    console.warn('出力の所要時間を覚えられませんでした: ' + e);
+  }
+}
+
 /** 一時スプレッドシートを捨てる。成否にかかわらず必ず通す */
 function trashTemp_(job) {
   if (!job || !job.tempId) return;
@@ -1767,6 +1792,7 @@ function finishExport_(job, temp) {
     job.state = 'done';
     job.pdfUrl = file.getUrl();
     job.finishedAt = new Date().toISOString();
+    rememberRate_(job);        // 次に出すときの「およそ何分」に使う
     audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
   } catch (e) {
     job.state = 'error';
