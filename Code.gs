@@ -99,13 +99,14 @@ const CFG = {
       DATE:   1,           // A 日付・曜日・営業時間(2行ぶち抜き)
       RX:     2,           // B 処方箋枚数(単位「枚」は隣のC列に印字済み)
       INQ:    4,           // D 疑義照会件数(単位「件」はE列)
+      MGMT:   6,           // F 管理に関する事項(上段。自由記述)
       ROOM_T: 7,           // G 調剤室 温度
       ROOM_H: 8,           // H 調剤室 湿度
       COLD_T: 9,           // I 冷所 温度
       COLD_H: 10,          // J 冷所 湿度
       STAFF:  11,          // K 担当者印
       ADMIN:  12,          // L 管理者印
-      NOTE:   2            // 下段 B(B〜Lが結合されている)の左上
+      NOTE:   2            // 下段 B(B〜Lが結合されている)の左上。譲渡・譲受記録
     },
 
     /** 単位は表示形式で付けます。値は数値のまま入るので集計にも使えます */
@@ -180,7 +181,8 @@ const SH = {
   STAFF: '担当者マスタ',
   TERM:  '管理薬剤師任期',
   LOG:   '変更履歴',
-  FIX:   '確定台帳'
+  FIX:   '確定台帳',
+  XFER:  '譲渡記録'
 };
 
 /** 列定義。ここを変えたら setup() を再実行してください */
@@ -188,7 +190,11 @@ const COLS = {
   DAILY: ['店舗コード', '日付',
           '処方箋枚数', '疑義照会件数',
           '調剤室温度', '調剤室湿度', '冷所温度', '冷所湿度',
-          // 帳票の「管理に関する事項」欄(医薬品の譲渡・譲受記録)
+          // 帳票 上段F列。自由記述。1日1つ
+          '管理に関する事項',
+          // ↓ ここから8列は、譲渡記録を別シートに移す前の置き場所。
+          //   新しい記録は「譲渡記録」シートに入ります。移行前のデータを
+          //   見失わないよう、読み取りの控えとして残してあります。
           '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
           '包装形態', '譲渡数', 'Lot', '使用期限',
           '担当者', '入力日時', '管理者', '承認日時', '状態', '編集者', '編集開始'],
@@ -199,7 +205,11 @@ const COLS = {
   FIX:   ['ID', '対象月', '版', '確定日時', '確定者',
           'ファイル名', 'ファイルID', 'リンク',
           // 証跡。ハッシュ = PDFそのもの、連鎖 = 1つ前の連鎖とこの行をまとめたもの
-          'ハッシュ', '連鎖', '状態', '備考']
+          'ハッシュ', '連鎖', '状態', '備考'],
+  // 医薬品の譲渡・譲受。1日に何件でも入るので、日報とは別の行で持ちます
+  XFER:  ['ID', '店舗コード', '日付', '連番',
+          '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
+          '包装形態', '譲渡数', 'Lot', '使用期限', '登録日時', '登録者']
 };
 
 const PROP = PropertiesService.getScriptProperties();
@@ -215,16 +225,18 @@ function setup() {
   ensureSheet_(SH.TERM,  COLS.TERM);
   ensureSheet_(SH.LOG,   COLS.LOG);
   ensureSheet_(SH.FIX,   COLS.FIX);
+  ensureSheet_(SH.XFER,  COLS.XFER);
 
   // 日付と就任日は文字列で持つ(タイムゾーンのずれで1日前後するのを避けるため)
   formatTextColumn_(SH.DAILY, '日付');
   formatTextColumn_(SH.TERM,  '就任日');
+  formatTextColumn_(SH.XFER,  '日付');
 
   sealFolder_();   // 印影フォルダを作っておく
 
   Logger.log('====================================================');
   Logger.log('シートを用意しました: '
-    + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG, SH.FIX].join(' / '));
+    + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG, SH.FIX, SH.XFER].join(' / '));
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
   Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
@@ -278,6 +290,7 @@ SHEET_COLS[SH.STAFF] = COLS.STAFF;
 SHEET_COLS[SH.TERM]  = COLS.TERM;
 SHEET_COLS[SH.LOG]   = COLS.LOG;
 SHEET_COLS[SH.FIX]   = COLS.FIX;
+SHEET_COLS[SH.XFER]  = COLS.XFER;
 
 /** この実行で確認済みのシート */
 const SCHEMA_CHECKED = {};
@@ -770,7 +783,13 @@ function audit_(action, detail, actor) {
    4. 日報の読み書き
    ############################################################ */
 
-/** 帳票の「管理に関する事項」欄。画面のキーとシートの列を1対1で結びます */
+/**
+ * 帳票 下段の「譲渡・譲受記録」。画面のキーと「譲渡記録」シートの列を1対1で結びます。
+ *
+ * ★ 帳票 上段F列の「管理に関する事項」とは別のものです。
+ *    管理に関する事項 … その日の特記事項。自由記述。1日1つ
+ *    譲渡・譲受記録   … 医薬品を渡した／受けた記録。1日に何件でも
+ */
 const XFER_MAP = [
   { key: 'xKind',    col: '譲渡区分' },
   { key: 'xPartner', col: '譲渡先名' },
@@ -793,6 +812,85 @@ function dailyIndex_() {
   return { t: t, map: map };
 }
 
+/* ------------------------------------------------------------
+ *  譲渡・譲受記録
+ *
+ *  1日に何件でも入るので、日報とは別の行で持ちます。
+ *  日付ごとにまとめて読み、書くときはその日のぶんを入れ替えます。
+ * ---------------------------------------------------------- */
+
+/** 日付 → その日の譲渡記録(連番順) */
+function xferIndex_() {
+  const t = table_(SH.XFER);
+  const map = {};
+  t.rows.forEach(function (r) {
+    if (String(r['店舗コード']) !== CFG.STORE_CODE) return;
+    const d = fmt_(r['日付']);
+    if (!d) return;
+    (map[d] = map[d] || []).push(r);
+  });
+  Object.keys(map).forEach(function (d) {
+    map[d].sort(function (a, b) { return (Number(a['連番']) || 0) - (Number(b['連番']) || 0); });
+  });
+  return { t: t, map: map };
+}
+
+/**
+ * その日の譲渡記録を、画面の形の配列で返す。
+ *
+ * まだ移行していないデータのために、譲渡記録シートに1件も無いときだけ
+ * 日報DBの旧8列を見にいきます(1件ぶん入っていることがあります)。
+ */
+function xfersOf_(iso, xi, dailyRow) {
+  const rows = (xi && xi.map[iso] ? xi.map[iso] : []).map(function (r) {
+    const o = {};
+    XFER_MAP.forEach(function (m) { o[m.key] = String(r[m.col] || '').trim(); });
+    return o;
+  });
+  if (rows.length || !dailyRow) return rows;
+
+  const legacy = {};
+  let any = false;
+  XFER_MAP.forEach(function (m) {
+    legacy[m.key] = String(dailyRow[m.col] || '').trim();
+    if (legacy[m.key]) any = true;
+  });
+  return any ? [legacy] : [];
+}
+
+/** 中身が1つでも入っている記録だけ残す */
+function xferClean_(list) {
+  return (list || []).map(function (x) {
+    const o = {};
+    XFER_MAP.forEach(function (m) { o[m.key] = String((x && x[m.key]) || '').trim(); });
+    return o;
+  }).filter(function (o) {
+    return XFER_MAP.some(function (m) { return o[m.key]; });
+  });
+}
+
+/** その日の譲渡記録を入れ替える。数が変わるので、消してから入れ直します */
+function writeXfers_(iso, list, actor) {
+  const xi = xferIndex_();
+  const old = (xi.map[iso] || []).map(function (r) { return r._row; })
+    .sort(function (a, b) { return b - a; });        // 下から消す(行番号がずれるため)
+  old.forEach(function (row) { xi.t.sh.deleteRow(row); });
+
+  const clean = xferClean_(list);
+  if (!clean.length) return clean;
+
+  const t = table_(SH.XFER);                         // 消したあとの状態で読み直す
+  clean.forEach(function (x, i) {
+    const patch = {
+      'ID': uid_('X'), '店舗コード': CFG.STORE_CODE, '日付': iso, '連番': i + 1,
+      '登録日時': new Date(), '登録者': String(actor || '')
+    };
+    XFER_MAP.forEach(function (m) { patch[m.col] = x[m.key]; });
+    appendRow_(t, patch);
+  });
+  return clean;
+}
+
 function dailyCountsByStaff_() {
   const t = table_(SH.DAILY);
   const c = {};
@@ -803,19 +901,29 @@ function dailyCountsByStaff_() {
   return c;
 }
 
-/** 1行を画面の形に変換する */
-function toDay_(iso, row, terms) {
+/**
+ * 1行を画面の形に変換する。
+ *
+ * note  … 管理に関する事項(帳票 上段F列)。自由記述。1日1つ
+ * xfers … 譲渡・譲受記録(帳票 下段)。1日に何件でも。別シートから引く
+ *
+ * @param {Object} xi xferIndex_() の結果。渡さないと xfers は空のまま
+ */
+function toDay_(iso, row, terms, xi) {
   const base = {
     date: iso, dow: dowOf_(iso),
     rx: null, inquiry: null,
     roomTemp: null, roomHumid: null, coldTemp: null, coldHumid: null,
-    xKind: '', xPartner: '', xMaker: '', xDrug: '',
-    xPack: '', xQty: '', xLot: '', xExpiry: '',
+    note: '',
+    xfers: [],
     staff: '', admin: '', savedAt: '', approvedAt: '', lockedBy: '',
     chief: chiefOn_(iso, terms),
     state: 'empty'
   };
-  if (!row) return base;
+  if (!row) {
+    base.xfers = xfersOf_(iso, xi, null);
+    return base;
+  }
 
   base.rx        = num_(row['処方箋枚数']);
   base.inquiry   = num_(row['疑義照会件数']);
@@ -824,7 +932,8 @@ function toDay_(iso, row, terms) {
   base.coldTemp  = num_(row['冷所温度']);
   base.coldHumid = num_(row['冷所湿度']);
 
-  XFER_MAP.forEach(function (m) { base[m.key] = String(row[m.col] || ''); });
+  base.note  = String(row['管理に関する事項'] || '');
+  base.xfers = xfersOf_(iso, xi, row);
   base.staff    = String(row['担当者'] || '');
   base.admin    = String(row['管理者'] || '');
   base.savedAt  = hhmm_(row['入力日時']);
@@ -876,11 +985,12 @@ function weekPayload_(anchorIso) {
   const start = weekStart_(anchor);
   const idx = dailyIndex_();
   const terms = termList_();
+  const xi = xferIndex_();
 
   const days = [];
   for (let i = 0; i < 7; i++) {
     const iso = addDays_(start, i);
-    days.push(toDay_(iso, idx.map[iso], terms));
+    days.push(toDay_(iso, idx.map[iso], terms, xi));
   }
 
   const staff = staffList_();
@@ -953,16 +1063,21 @@ function saveDay_(p) {
       '調剤室湿度': num_(p.roomHumid),
       '冷所温度': num_(p.coldTemp),
       '冷所湿度': num_(p.coldHumid),
+      '管理に関する事項': String(p.note || '').trim(),
       '担当者': staffName,
       '入力日時': new Date(),
       '状態': '入力済',
       '編集者': '',
       '編集開始': ''
     };
-    XFER_MAP.forEach(function (m) { patch[m.col] = String(p[m.key] || ''); });
+    // 譲渡記録は別シートへ移したので、日報DBの旧8列は空にしておく。
+    // 残したままだと、譲渡を1件も入れずに保存したときに古い値が復活する
+    XFER_MAP.forEach(function (m) { patch[m.col] = ''; });
 
     if (row) writeRow_(idx.t, row._row, patch);
     else appendRow_(idx.t, patch);
+
+    writeXfers_(iso, p.xfers, staffName);   // その日のぶんを入れ替える
 
     return weekPayload_(iso);
   } finally {
@@ -1195,6 +1310,54 @@ function seedForTest() {
   Logger.log(JSON.stringify(weekPayload_(null), null, 2).slice(0, 1200));
 }
 
+/**
+ * ★ 手で1回だけ実行して、日報DBの旧8列に入っている譲渡記録を
+ *    「譲渡記録」シートへ移します。
+ *
+ *    以前は譲渡記録を日報DBの列で持っていたので、1日1件しか入りませんでした。
+ *    移したあとは、1日に何件でも入れられます。
+ *
+ *    移したあと日報DBの旧8列は空にします(同じ内容が2か所に残ると、
+ *    どちらが正しいのか分からなくなるため)。
+ */
+function migrateXfers() {
+  const idx = dailyIndex_();
+  const xi = xferIndex_();
+  const moved = [];
+
+  idx.t.rows.forEach(function (r) {
+    if (String(r['店舗コード']) !== CFG.STORE_CODE) return;
+    const iso = fmt_(r['日付']);
+    if (!iso) return;
+    if (xi.map[iso] && xi.map[iso].length) return;    // すでに移してある
+
+    const one = {};
+    let any = false;
+    XFER_MAP.forEach(function (m) {
+      one[m.key] = String(r[m.col] || '').trim();
+      if (one[m.key]) any = true;
+    });
+    if (any) moved.push({ iso: iso, row: r._row, one: one });
+  });
+
+  if (!moved.length) {
+    console.log('移すものはありませんでした');
+    return 0;
+  }
+
+  moved.forEach(function (x) {
+    writeXfers_(x.iso, [x.one], '移行');
+    const patch = {};
+    XFER_MAP.forEach(function (m) { patch[m.col] = ''; });
+    writeRow_(idx.t, x.row, patch);
+    console.log('  ' + x.iso + '  ' + xferOne_(x.one));
+  });
+
+  console.log(moved.length + ' 件を「' + SH.XFER + '」シートへ移しました');
+  audit_('譲渡記録を別シートへ移行', moved.length + ' 件', '');
+  return moved.length;
+}
+
 /** 期限切れの編集ロックを掃除する。1日1回のトリガーに入れておくと安心 */
 function sweepStaleLocks() {
   const idx = dailyIndex_();
@@ -1270,7 +1433,7 @@ function buildTemplate() {
   mergeSet_(sh, 1, C.DATE, t.HEAD_ROWS, 1, t.HEADER.DATE);
   mergeSet_(sh, 1, C.RX,   1, 2, t.HEADER.RX);      // B:C
   mergeSet_(sh, 1, C.INQ,  1, 2, t.HEADER.INQ);     // D:E
-  sh.getRange(1, C.INQ + 2).setValue(t.HEADER.NOTE);          // F
+  sh.getRange(1, C.MGMT).setValue(t.HEADER.NOTE);             // F
   mergeSet_(sh, 1, C.ROOM_T, 1, 2, t.HEADER.ROOM);  // G:H
   mergeSet_(sh, 1, C.COLD_T, 1, 2, t.HEADER.COLD);  // I:J
   sh.getRange(1, C.ADMIN).setValue(t.HEADER.ADMIN);
@@ -1505,17 +1668,18 @@ function dumpTemplateLayout() {
  * ========================================================== */
 
 /** 帳票用に整えた1週間分のデータ(画面のプレビューでも使う) */
-function weekRows_(startIso, idx, terms) {
+function weekRows_(startIso, idx, terms, xi) {
   const rows = [];
   for (let i = 0; i < PRINT.DAY_ROWS; i++) {
     const iso = addDays_(startIso, i);
-    const d = toDay_(iso, idx.map[iso], terms);
+    const d = toDay_(iso, idx.map[iso], terms, xi);
     rows.push({
       date: iso,
       dow: d.dow,
       hours: CFG.BUSINESS_HOURS,
       rx: d.rx, inquiry: d.inquiry,
-      note: xferLine_(d),
+      note: d.note,          // 上段F列。管理に関する事項
+      xfers: xferLines_(d),  // 下段。譲渡・譲受記録(0件以上)
       roomTemp: d.roomTemp, roomHumid: d.roomHumid,
       coldTemp: d.coldTemp, coldHumid: d.coldHumid,
       filled: d.state !== 'empty' && d.state !== 'editing',
@@ -1527,11 +1691,15 @@ function weekRows_(startIso, idx, terms) {
   return rows;
 }
 
-/** 管理に関する事項を1行にまとめる */
-function xferLine_(d) {
-  const parts = XFER_MAP.map(function (m) { return String(d[m.key] || '').trim(); });
-  if (!parts.some(function (x) { return x; })) return '';
-  return parts.filter(function (x) { return x; }).join('／');
+/** 譲渡記録1件を、帳票の1行ぶんの文字列にする */
+function xferOne_(x) {
+  return XFER_MAP.map(function (m) { return String((x && x[m.key]) || '').trim(); })
+    .filter(function (v) { return v; }).join('／');
+}
+
+/** その日の譲渡記録を、帳票の下段に出す行の配列にする */
+function xferLines_(d) {
+  return (d.xfers || []).map(xferOne_).filter(function (v) { return v; });
 }
 
 /**
@@ -1660,8 +1828,13 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing)
           .setFontWeights([bad.map(function (x) { return x ? 'bold' : 'normal'; })]);
     }
 
-    // 下段。管理に関する事項(B〜Lが結合されている)
-    if (r.note) sh.getRange(r2, t.COL.NOTE).setValue(r.note);
+    // 上段F。管理に関する事項(その日の特記事項)
+    if (r.note) sh.getRange(r1, t.COL.MGMT).setValue(r.note);
+
+    // 下段(B〜Lが結合されている)。譲渡・譲受記録。何件でも1つのセルに並べる
+    if (r.xfers && r.xfers.length) {
+      sh.getRange(r2, t.COL.NOTE).setValue(r.xfers.join('\n'));
+    }
   });
 
   // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
@@ -1807,7 +1980,7 @@ function stampCell_(sh, row, col, blob, geo) {
 function getPrintPreview(anchorIso) {
   return guard_('getPrintPreview', function () {
     const start = weekStart_(anchorIso ? fmt_(anchorIso) : today_());
-    const rows = weekRows_(start, dailyIndex_(), termList_());
+    const rows = weekRows_(start, dailyIndex_(), termList_(), xferIndex_());
     const seals = {};
     staffList_().forEach(function (s) {
       if (s.sealFileId) seals[s.name] = sealDataUrl_(s.sealFileId);
@@ -1902,6 +2075,7 @@ function runExportChunk() {
     const temp = SpreadsheetApp.openById(job.tempId);
     const idx = dailyIndex_();
     const terms = termList_();
+    const xi = xferIndex_();               // 譲渡記録も1回だけ読む
     const seals = sealBlobMap_();          // 印影は1回だけ読む(ここが効く)
     const tpl = templateSheet_();          // テンプレートの引き直しも1回に
     const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
@@ -1911,7 +2085,7 @@ function runExportChunk() {
     // (1回きりなら、下ごしらえの複製ぶんだけ損になるため)
     const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
     for (let i = job.done; i < job.weeks.length; i++) {
-      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms));
+      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms, xi));
       base.count[k.admin] = (base.count[k.admin] || 0) + 1;
       base.count[k.full]  = (base.count[k.full]  || 0) + 1;
     }
@@ -1919,7 +2093,7 @@ function runExportChunk() {
     try {
       while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
         const w = job.weeks[job.done];
-        const rows = weekRows_(w, idx, terms);
+        const rows = weekRows_(w, idx, terms, xi);
         const b = sealBase_(temp, tpl, rows, seals, geo, base);
         renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
         job.done++;
@@ -2066,7 +2240,7 @@ function benchmarkExport() {
   const tCreate = Date.now() - t0;
 
   try {
-    const rows = weekRows_(start, idx, terms);
+    const rows = weekRows_(start, idx, terms, xferIndex_());
     const timing = {};
     const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
     const k = sealKeys_(rows);
@@ -2326,11 +2500,19 @@ function diffDay_(before, after) {
     if (a === b) return;
     out.push(f.label + ' ' + showNum_(a, f.dec, f.unit) + '→' + showNum_(b, f.dec, f.unit));
   });
-  XFER_MAP.forEach(function (m) {
-    const a = String(before[m.key] || '').trim();
-    const b = String(after[m.key] || '').trim();
-    if (a !== b) out.push(m.col + '「' + (a || '空欄') + '」→「' + (b || '空欄') + '」');
-  });
+  const na = String(before.note || '').trim();
+  const nb = String(after.note || '').trim();
+  if (na !== nb) {
+    out.push('管理に関する事項「' + (na || '空欄') + '」→「' + (nb || '空欄') + '」');
+  }
+
+  // 譲渡記録は件数が変わるので、行ごとに見比べる
+  const xa = (before.xfers || []).map(xferOne_);
+  const xb = xferClean_(after.xfers).map(xferOne_);
+  if (xa.join('\u0001') !== xb.join('\u0001')) {
+    out.push('譲渡・譲受記録 ' + xa.length + '件 → ' + xb.length + '件'
+      + (xb.length ? '：' + xb.join(' ／ ') : ''));
+  }
   return out;
 }
 
@@ -2350,6 +2532,7 @@ function ledgerPayload_(anchorIso) {
 
   const idx   = dailyIndex_();
   const terms = termList_();
+  const xi    = xferIndex_();
   const staff = staffList_();
 
   const seals = {};
@@ -2370,13 +2553,14 @@ function ledgerPayload_(anchorIso) {
     const rows = [];
     for (let i = 0; i < PRINT.DAY_ROWS; i++) {
       const iso = addDays_(w, i);
-      const d = toDay_(iso, idx.map[iso], terms);
+      const d = toDay_(iso, idx.map[iso], terms, xi);
       const row = {
         date: iso, dow: d.dow, hours: CFG.BUSINESS_HOURS,
         rx: d.rx, inquiry: d.inquiry,
         roomTemp: d.roomTemp, roomHumid: d.roomHumid,
         coldTemp: d.coldTemp, coldHumid: d.coldHumid,
-        note: xferLine_(d),
+        note: d.note,          // 上段F列。管理に関する事項
+        xfers: d.xfers,        // 下段。譲渡・譲受記録(0件以上)
         state: d.state,
         filled: d.state !== 'empty' && d.state !== 'editing',
         approved: d.state === 'approved',
@@ -2389,7 +2573,6 @@ function ledgerPayload_(anchorIso) {
         future: iso > today,
         alerts: rangeAlerts_(d)
       };
-      XFER_MAP.forEach(function (m) { row[m.key] = d[m.key]; });
       rows.push(row);
 
       if (!row.inMonth) continue;
@@ -2462,7 +2645,7 @@ function saveLedgerDay_(p) {
   if (!actor) throw new Error('操作者が特定できません');
 
   const terms  = termList_();
-  const before = toDay_(iso, dailyIndex_().map[iso], terms);
+  const before = toDay_(iso, dailyIndex_().map[iso], terms, xferIndex_());
   const wasApproved = before.state === 'approved';
 
   if (wasApproved && !p.force) {
@@ -2490,9 +2673,9 @@ function saveLedgerDay_(p) {
     }
   }
 
-  const q = { date: iso, staff: staffName, force: true };
+  const q = { date: iso, staff: staffName, force: true,
+              note: p.note, xfers: p.xfers };
   DIFF_FIELDS.forEach(function (f) { q[f.key] = p[f.key]; });
-  XFER_MAP.forEach(function (m) { q[m.key] = p[m.key]; });
   saveDay_(q);
 
   if (wasApproved) {

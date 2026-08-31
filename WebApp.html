@@ -337,6 +337,29 @@ button,input,select{font:inherit;color:inherit}
   background:var(--surface);font-size:15px;
 }
 .field.txt select:focus{outline:none;border-color:var(--accent)}
+.field.txt textarea{
+  width:100%;padding:11px 14px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:var(--surface);font:inherit;font-size:15px;line-height:1.6;
+  resize:vertical;min-height:5.2em;
+}
+.field.txt textarea:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.field.txt textarea:disabled{background:var(--surface-2);color:var(--muted)}
+
+/* 譲渡・譲受記録。1件ぶんをひとかたまりにして、何件でも足せるようにする */
+.xrec{
+  border:1px solid var(--line);border-radius:10px;padding:12px;
+  background:var(--surface-2);margin-top:10px;
+}
+.xrec-hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.xrec-hd b{font-family:var(--disp);font-size:12px;color:var(--ink-2)}
+.xrec-hd .sp{flex:1}
+.xrec .xfer-body{margin-top:0}
+.xnone{
+  font-size:12px;color:var(--muted);line-height:1.7;
+  border:1px dashed var(--line-strong);border-radius:10px;padding:12px;margin-top:10px;
+}
+.xcount{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
 
 /* 管理に関する事項(譲渡記録) */
 .xfer{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}
@@ -665,6 +688,9 @@ table.pv td.u{text-align:left;font-size:7.5px;color:#3d4a45}
 table.pv td.e{text-align:right;font-size:9.5px;white-space:nowrap}
 table.pv td.e.ng{color:#c42a26;font-weight:700}
 table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
+table.pv td.mg{font-size:8px;line-height:1.4;color:#111614;vertical-align:middle}
+table.pv td.mg.ed{padding:0;background:#fffdf3}
+table.pv td.mg.ed input{text-align:left;font-size:9px}
 table.pv td.st{text-align:center;padding:1px}
 table.pv td.st img{width:24px;height:24px;display:block;margin:0 auto}
 table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
@@ -1572,7 +1598,8 @@ function valSummary(d, future){
        + '<b class="' + cls('roomHumid') + '">' + fmt(d.roomHumid,0) + '</b> · '
        + '冷<b class="' + cls('coldTemp') + '">' + fmt(d.coldTemp,1) + '</b>/'
        + '<b class="' + cls('coldHumid') + '">' + fmt(d.coldHumid,0) + '</b>'
-       + (d.xDrug ? ' · <b>譲渡</b>' : '');
+       + ((d.xfers && d.xfers.length) ? ' · <b>譲渡' + d.xfers.length + '</b>' : '')
+       + (d.note ? ' · <b>事項</b>' : '');
 }
 
 function stateChip(d, future){
@@ -1630,7 +1657,7 @@ function renderForm(){
     checkRange(f);
   });
 
-  renderXfer_(d, ro);
+  renderNoteXfer_(d, ro);
 
   // 押印欄。管理者印は、その日の管理薬剤師が誰だったかを常に示す
   seal('sealStaff', d.staff, d.savedAt);
@@ -1700,58 +1727,164 @@ function release_(date){
   call('releaseDay', [{ date:date, staff:S.me }], function(){}, function(){});
 }
 
-/* 管理に関する事項(譲渡記録)。
-   譲渡があった日だけ書く欄なので、既定は閉じておき、
-   「記載あり」を押したときだけ入力欄を出します。 */
-function renderXfer_(d, ro){
-  var has = XFER.some(function(f){ return d[f.key]; });
-  if (S.xferOpen === undefined || S.xferDate !== d.date){
-    S.xferOpen = has;
-    S.xferDate = d.date;
+/* ============================================================
+   管理に関する事項 と 譲渡・譲受記録
+
+   帳票では別の欄です。ひとまとめにしてはいけません。
+
+     管理に関する事項 … 上段F列。その日の特記事項。自由記述。1日1つ
+     譲渡・譲受記録   … 下段(B〜L結合)。医薬品を渡した／受けた記録。
+                        1日に何件でも入り、下段に1件ずつ並びます。
+   ============================================================ */
+
+/** 譲渡記録1件を、帳票に出るのと同じ1行の文字列にする */
+function xLine_(x){
+  return XFER.map(function(f){ return String((x && x[f.key]) || '').trim(); })
+             .filter(function(v){ return v; }).join('／');
+}
+
+/** その日の譲渡記録を、帳票の下段に出る行の配列にする */
+function xLines_(v){
+  return ((v && v.xfers) || []).map(xLine_).filter(function(t){ return t; });
+}
+
+function xBlank_(){
+  var o = {};
+  XFER.forEach(function(f){ o[f.key] = ''; });
+  return o;
+}
+
+/** 中身が1つでも入っている記録だけ残す */
+function xClean_(list){
+  return (list || []).filter(function(x){
+    return XFER.some(function(f){ return String(x[f.key] || '').trim(); });
+  }).map(function(x){
+    var o = {};
+    XFER.forEach(function(f){ o[f.key] = String(x[f.key] || '').trim(); });
+    return o;
+  });
+}
+
+function renderNoteXfer_(d, ro){
+  // 日が変わったら、その日の記録を読み直す
+  if (S.xDate !== d.date){
+    S.xDate = d.date;
+    S.xlist = (d.xfers || []).map(function(x){ return Object.assign({}, x); });
   }
 
-  var body = XFER.map(function(f){
-    var v = d[f.key] == null ? '' : String(d[f.key]);
-    var input;
-    if (f.type === 'select'){
-      input = '<select id="in_'+f.key+'"'+(ro?' disabled':'')+'>'
-            + '<option value=""></option>'
-            + f.choices.map(function(c){
-                return '<option'+(c===v?' selected':'')+'>'+esc(c)+'</option>'; }).join('')
-            + '</select>';
-    } else {
-      input = '<div class="inputwrap"><input id="in_'+f.key+'" type="'
-            + (f.type === 'month' ? 'month' : 'text') + '" value="'+esc(v)+'"'
-            + (ro?' disabled':'') + '></div>';
-    }
-    return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
-      + '<label for="in_'+f.key+'">'+esc(f.label)+'</label>' + input + '</div>';
-  }).join('');
-
   document.getElementById('xfer').innerHTML =
-      '<div class="xfer-hd">'
-    +   '<h3>管理に関する事項</h3>'
-    +   '<button class="toggle" id="xferToggle" aria-pressed="'+(S.xferOpen?'true':'false')+'"'
-    +     (ro?' disabled':'') + '>' + (S.xferOpen ? '記載あり' : '記載なし') + '</button>'
-    +   '<div class="xfer-note">医薬品の譲渡・譲受があった日だけ記入します。'
-    +     '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</div>'
+      '<div class="field txt wide">'
+    +   '<label for="in_note">管理に関する事項</label>'
+    +   '<textarea id="in_note" rows="3"' + (ro ? ' disabled' : '')
+    +     ' placeholder="例：調剤台の照度を測定。基準内。">' + esc(d.note || '') + '</textarea>'
+    +   '<div class="hint">その日の特記事項を書きます（設備の点検、事故や苦情、研修など）。'
+    +     '帳票の上段「管理に関する事項」の欄にそのまま入ります。</div>'
     + '</div>'
-    + '<div class="xfer-body" id="xferBody"' + (S.xferOpen ? '' : ' hidden') + '>' + body + '</div>';
+    + '<div class="xfer">'
+    +   '<div class="xfer-hd">'
+    +     '<h3>譲渡・譲受記録</h3>'
+    +     '<span class="xcount" id="xCount"></span>'
+    +     '<button class="mini" id="xAdd"' + (ro ? ' disabled' : '') + '>＋ 記録を追加</button>'
+    +     '<div class="xfer-note">医薬品を渡した／受けた日だけ記入します。'
+    +       '<b style="display:inline">1日に何件でも</b>入り、帳票の下段に1件ずつ並びます。'
+    +       '管理に関する事項とは別の欄です。</div>'
+    +   '</div>'
+    +   '<div id="xList"></div>'
+    + '</div>';
 
-  var btn = document.getElementById('xferToggle');
-  if (btn) btn.addEventListener('click', function(){
-    S.xferOpen = !S.xferOpen;
-    btn.setAttribute('aria-pressed', S.xferOpen ? 'true' : 'false');
-    btn.textContent = S.xferOpen ? '記載あり' : '記載なし';
-    document.getElementById('xferBody').hidden = !S.xferOpen;
-    if (S.xferOpen) claimOnce_();
+  var note = document.getElementById('in_note');
+  note.addEventListener('input', function(){
+    S.dirty = true;
+    if (!S.me) needStaff(false); else claimOnce_();
   });
 
-  XFER.forEach(function(f){
-    var el = document.getElementById('in_'+f.key);
-    if (el) el.addEventListener('input', function(){
+  var add = document.getElementById('xAdd');
+  if (add) add.addEventListener('click', function(){
+    xSync_();
+    S.xlist.push(xBlank_());
+    S.dirty = true;
+    xRender_(ro);
+    var el = document.getElementById('x' + (S.xlist.length - 1) + '_xKind');
+    if (el) el.focus();
+    if (!S.me) needStaff(false); else claimOnce_();
+  });
+
+  xRender_(ro);
+}
+
+/** 入力欄の中身を S.xlist に写す(足す・消すで作り直す前に呼ぶ) */
+function xSync_(){
+  (S.xlist || []).forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('x' + i + '_' + f.key);
+      if (el) x[f.key] = el.value;
+    });
+  });
+}
+
+/** いま画面に出ている譲渡記録を、送れる形で取り出す */
+function xCollect_(){
+  xSync_();
+  return xClean_(S.xlist || []);
+}
+
+function xRender_(ro){
+  var box = document.getElementById('xList');
+  if (!box) return;
+  var list = S.xlist || [];
+
+  document.getElementById('xCount').textContent = list.length ? list.length + ' 件' : '';
+
+  if (!list.length){
+    box.innerHTML = '<div class="xnone">この日は譲渡・譲受はありません。'
+      + 'あった場合は［＋ 記録を追加］を押してください。</div>';
+    return;
+  }
+
+  box.innerHTML = list.map(function(x, i){
+    return '<div class="xrec" data-i="' + i + '">'
+      + '<div class="xrec-hd"><b>' + (i + 1) + ' 件目</b><div class="sp"></div>'
+      +   (ro ? '' : '<button class="mini danger" data-xdel="' + i + '">この記録を消す</button>')
+      + '</div>'
+      + '<div class="xfer-body">'
+      + XFER.map(function(f){
+          var id = 'x' + i + '_' + f.key;
+          var v = String(x[f.key] || '');
+          var input;
+          if (f.type === 'select'){
+            input = '<select id="' + id + '"' + (ro ? ' disabled' : '') + '>'
+                  + '<option value=""></option>'
+                  + f.choices.map(function(c){
+                      return '<option' + (c === v ? ' selected' : '') + '>' + esc(c) + '</option>';
+                    }).join('') + '</select>';
+          } else {
+            input = '<div class="inputwrap"><input id="' + id + '" type="'
+                  + (f.type === 'month' ? 'month' : 'text') + '" value="' + esc(v) + '"'
+                  + (ro ? ' disabled' : '') + '></div>';
+          }
+          return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+               + '<label for="' + id + '">' + esc(f.label) + '</label>' + input + '</div>';
+        }).join('')
+      + '</div></div>';
+  }).join('');
+
+  Array.prototype.forEach.call(box.querySelectorAll('[data-xdel]'), function(b){
+    b.addEventListener('click', function(){
+      var i = Number(b.getAttribute('data-xdel'));
+      xSync_();
+      S.xlist.splice(i, 1);
       S.dirty = true;
-      if (!S.me) needStaff(false); else claimOnce_();
+      xRender_(ro);
+    });
+  });
+
+  list.forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('x' + i + '_' + f.key);
+      if (el) el.addEventListener('input', function(){
+        S.dirty = true;
+        if (!S.me) needStaff(false); else claimOnce_();
+      });
     });
   });
 }
@@ -1794,20 +1927,29 @@ function sealAdmin_(d){
 /* 入力欄の中身を控える／戻す。
    担当者を選び直したときにフォームを作り直すので、その前後で使う */
 function formSnapshot_(){
-  var snap = {};
-  FIELDS.concat(XFER).forEach(function(f){
+  var snap = { _note: '', _xfers: null };
+  FIELDS.forEach(function(f){
     var el = document.getElementById('in_' + f.key);
     if (el) snap[f.key] = el.value;
   });
+  var n = document.getElementById('in_note');
+  if (n) snap._note = n.value;
+  snap._xfers = xCollect_();
   return snap;
 }
 function formRestore_(snap){
   if (!snap) return;
   Object.keys(snap).forEach(function(k){
-    if (snap[k] === '') return;
+    if (k.charAt(0) === '_' || snap[k] === '') return;
     var el = document.getElementById('in_' + k);
     if (el && !el.disabled) el.value = snap[k];
   });
+  var n = document.getElementById('in_note');
+  if (n && !n.disabled && snap._note) n.value = snap._note;
+  if (snap._xfers && snap._xfers.length){
+    S.xlist = snap._xfers;
+    xRender_(false);
+  }
   FIELDS.forEach(function(f){
     if (document.getElementById('in_' + f.key)) checkRange(f);
   });
@@ -1844,20 +1986,21 @@ document.getElementById('btnSave').addEventListener('click', function(){
 
   if (missing.length){ toast(missing.join('・') + ' を入力してください', true); return; }
 
-  // 管理に関する事項。「記載あり」のときだけ送り、最低限の項目は必須にする
-  XFER.forEach(function(f){ payload[f.key] = ''; });
-  if (S.xferOpen){
+  // 管理に関する事項(帳票 上段F)と、譲渡・譲受記録(帳票 下段)。別々に送る
+  var noteEl = document.getElementById('in_note');
+  payload.note = noteEl ? String(noteEl.value).trim() : '';
+
+  payload.xfers = xCollect_();
+  var bad = [];
+  payload.xfers.forEach(function(x, i){
     var lack = [];
-    XFER.forEach(function(f){
-      var el = document.getElementById('in_'+f.key);
-      payload[f.key] = el ? String(el.value).trim() : '';
-    });
-    if (!payload.xKind) lack.push('譲渡区分');
-    if (!payload.xDrug) lack.push('医薬品名称');
-    if (lack.length){
-      toast('管理に関する事項の ' + lack.join('・') + ' を入力してください', true);
-      return;
-    }
+    if (!x.xKind) lack.push('譲渡区分');
+    if (!x.xDrug) lack.push('医薬品名称');
+    if (lack.length) bad.push((i + 1) + '件目の ' + lack.join('・'));
+  });
+  if (bad.length){
+    toast('譲渡・譲受記録：' + bad.join('、') + ' を入力してください', true);
+    return;
   }
 
   // 逸脱値も記録できなければ意味がないので、止めずに確認だけする
@@ -2998,12 +3141,6 @@ function lgDirtyCount(){ return Object.keys(LG.dirty).length; }
 /** 元の値に、まだ保存していない編集を重ねたもの */
 function lgVal(r){ return Object.assign({}, r, LG.dirty[r.date] || {}); }
 
-/** 管理に関する事項を1行にまとめる(サーバー側の xferLine_ と同じ並び) */
-function lgNoteOf(v){
-  return XFER.map(function(f){ return String(v[f.key] || '').trim(); })
-             .filter(function(x){ return x; }).join('／');
-}
-
 function lgRow(date){
   var d = LG.data, hit = null;
   if (!d) return null;
@@ -3075,7 +3212,8 @@ function lgSave(date){
     toast(jp(date) + '：' + miss.join('・') + ' が未入力です', true);
     return;
   }
-  XFER.forEach(function(f){ payload[f.key] = String(v[f.key] || '').trim(); });
+  payload.note = String(v.note || '').trim();
+  payload.xfers = xClean_(v.xfers || []);
 
   if (outOf.length &&
       !confirm(jp(date) + '\n' + outOf.join('・') + ' が管理基準を外れています。\nこの値のまま記録しますか？')){
@@ -3138,52 +3276,103 @@ function lgOpenXfer(date){
   if (!r) return;
   var v = lgVal(r);
   LG.xfDate = date;
+  LG.xfList = (v.xfers || []).map(function(x){ return Object.assign({}, x); });
 
   document.getElementById('xfTitle').textContent =
-    jp(date) + '（' + r.dow + '）管理に関する事項';
+    jp(date) + '（' + r.dow + '）譲渡・譲受記録';
+  lgXfRender_();
+  document.getElementById('xfOverlay').classList.add('open');
+}
+
+/** 入力欄の中身を LG.xfList に写す(足す・消すで作り直す前に呼ぶ) */
+function lgXfSync_(){
+  (LG.xfList || []).forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('xf' + i + '_' + f.key);
+      if (el) x[f.key] = el.value;
+    });
+  });
+}
+
+function lgXfRender_(){
+  var list = LG.xfList || [];
 
   document.getElementById('xfBody').innerHTML =
-      '<p class="lead-note">医薬品の譲渡・譲受があった日だけ記入します。'
-    + '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</p>'
-    + '<div class="xfer-body">'
-    + XFER.map(function(f){
-        var val = v[f.key] == null ? '' : String(v[f.key]);
-        var input;
-        if (f.type === 'select'){
-          input = '<select id="xf_' + f.key + '"><option value=""></option>'
-                + f.choices.map(function(c){
-                    return '<option' + (c === val ? ' selected' : '') + '>' + esc(c) + '</option>';
-                  }).join('')
-                + '</select>';
-        } else {
-          input = '<div class="inputwrap"><input id="xf_' + f.key + '" type="'
-                + (f.type === 'month' ? 'month' : 'text') + '" value="' + esc(val) + '"></div>';
-        }
-        return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
-             + '<label for="xf_' + f.key + '">' + esc(f.label) + '</label>' + input + '</div>';
-      }).join('')
+      '<p class="lead-note">医薬品を渡した／受けた日だけ記入します。'
+    + '<b style="display:inline">1日に何件でも</b>入ります。'
+    + '帳票の下段に1件ずつ並びます。<br>'
+    + 'その日の特記事項（設備の点検、事故や苦情など）は、'
+    + 'こことは別の「管理に関する事項」の欄に書いてください。</p>'
+    + '<div id="xfList">'
+    + (list.length
+        ? list.map(function(x, i){
+            return '<div class="xrec">'
+              + '<div class="xrec-hd"><b>' + (i + 1) + ' 件目</b><div class="sp"></div>'
+              +   '<button class="mini danger" data-xfdel="' + i + '">この記録を消す</button>'
+              + '</div>'
+              + '<div class="xfer-body">'
+              + XFER.map(function(f){
+                  var id = 'xf' + i + '_' + f.key;
+                  var val = String(x[f.key] || '');
+                  var input;
+                  if (f.type === 'select'){
+                    input = '<select id="' + id + '"><option value=""></option>'
+                          + f.choices.map(function(c){
+                              return '<option' + (c === val ? ' selected' : '') + '>'
+                                   + esc(c) + '</option>';
+                            }).join('') + '</select>';
+                  } else {
+                    input = '<div class="inputwrap"><input id="' + id + '" type="'
+                          + (f.type === 'month' ? 'month' : 'text')
+                          + '" value="' + esc(val) + '"></div>';
+                  }
+                  return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+                       + '<label for="' + id + '">' + esc(f.label) + '</label>' + input + '</div>';
+                }).join('')
+              + '</div></div>';
+          }).join('')
+        : '<div class="xnone">この日は譲渡・譲受はありません。'
+          + 'あった場合は［＋ 記録を追加］を押してください。</div>')
     + '</div>'
     + '<div class="actions">'
+    +   '<button class="mini" id="xfAdd">＋ 記録を追加</button>'
     +   '<button class="btn primary" id="xfOk">反映する</button>'
-    +   '<button class="btn ghost" id="xfClear">記載なしにする</button>'
+    +   '<button class="btn ghost" id="xfClear">ぜんぶ消す</button>'
     + '</div>';
 
-  document.getElementById('xfOverlay').classList.add('open');
+  Array.prototype.forEach.call(
+    document.getElementById('xfBody').querySelectorAll('[data-xfdel]'), function(b){
+      b.addEventListener('click', function(){
+        lgXfSync_();
+        LG.xfList.splice(Number(b.getAttribute('data-xfdel')), 1);
+        lgXfRender_();
+      });
+    });
+
+  document.getElementById('xfAdd').addEventListener('click', function(){
+    lgXfSync_();
+    var o = {};
+    XFER.forEach(function(f){ o[f.key] = ''; });
+    LG.xfList.push(o);
+    lgXfRender_();
+    var el = document.getElementById('xf' + (LG.xfList.length - 1) + '_xKind');
+    if (el) el.focus();
+  });
 
   document.getElementById('xfOk').addEventListener('click', function(){
-    XFER.forEach(function(f){
-      var el = document.getElementById('xf_' + f.key);
-      lgSet(LG.xfDate, f.key, el ? String(el.value).trim() : '');
-    });
+    lgXfSync_();
+    lgSet(LG.xfDate, 'xfers', xClean_(LG.xfList));
     lgCloseXfer();
     lgRender();
   });
+
   document.getElementById('xfClear').addEventListener('click', function(){
-    XFER.forEach(function(f){ lgSet(LG.xfDate, f.key, ''); });
+    lgSet(LG.xfDate, 'xfers', []);
     lgCloseXfer();
     lgRender();
   });
 }
+
 function lgCloseXfer(){ document.getElementById('xfOverlay').classList.remove('open'); }
 
 /* ---------- 表(帳票と同じ書式) ---------- */
@@ -3195,6 +3384,12 @@ function lgTable_(week){
   var span = Lay.cols - C.NOTE + 1;
 
   var blank = function(n){ var o = ''; for (var i = 0; i < n; i++) o += '<td></td>'; return o; };
+  // from〜to のうち skip 以外を空セルで埋める(管理に関する事項の列だけ別に出すため)
+  var blank2 = function(from, to, skip){
+    var o = '';
+    for (var c = from; c <= to; c++) if (c !== skip) o += '<td></td>';
+    return o;
+  };
 
   var stamp = function(name, pending){
     if (!name) return '<td class="st"></td>';
@@ -3244,12 +3439,21 @@ function lgTable_(week){
       + '<span class="rowact" id="act_' + r.date + '">' + lgActs_(r) + '</span>'
       + '</td>';
 
+    // 上段F。管理に関する事項(その日の特記事項)
+    var mg = ed
+      ? '<td class="mg ed"><input type="text" data-d="' + r.date + '" data-k="note"'
+        + ' value="' + esc(v.note || '') + '"></td>'
+      : '<td class="mg">' + esc(v.note || '') + '</td>';
+
+    // 下段。譲渡・譲受記録。何件でも1つのセルに並べる
+    var lines = xLines_(v);
     var note = ed
       ? '<td class="nt ed" colspan="' + span + '">'
-        + '<button class="notebtn' + (lgNoteOf(v) ? '' : ' empty') + '"'
+        + '<button class="notebtn' + (lines.length ? '' : ' empty') + '"'
         + ' data-act="xfer" data-date="' + r.date + '">'
-        + (lgNoteOf(v) ? esc(lgNoteOf(v)) : '＋ 譲渡・譲受を記入') + '</button></td>'
-      : '<td class="nt" colspan="' + span + '">' + esc(lgNoteOf(v)) + '</td>';
+        + (lines.length ? lines.map(esc).join('<br>')
+                        : '＋ 譲渡・譲受を記入') + '</button></td>'
+      : '<td class="nt" colspan="' + span + '">' + lines.map(esc).join('<br>') + '</td>';
 
     // 入力者と、その日の担当者は別人のことがある。
     // 代わりに入れた人の名前で押印しないよう、編集中は選べるようにする
@@ -3269,7 +3473,8 @@ function lgTable_(week){
       + '<td class="u">' + esc(Lay.unitRx) + '</td>'
       + n('inquiry', '1')
       + '<td class="u">' + esc(Lay.unitInq) + '</td>'
-      + blank(C.ROOM_T - C.INQ - 2)
+      + mg
+      + blank2(C.INQ + 2, C.ROOM_T - 1, C.MGMT)
       + e('roomTemp',  R.ROOM_TEMP,  Lay.phTemp,  1)
       + e('roomHumid', R.ROOM_HUMID, Lay.phHumid, 0)
       + e('coldTemp',  R.COLD_TEMP,  Lay.phTemp,  1)
@@ -3683,16 +3888,26 @@ var MOCK = (function(){
     }
   })();
 
-  // 譲渡があった日のサンプル(記録のある最初の日に入れる)
+  // 見本。管理に関する事項と、譲渡・譲受記録(1日に複数件)を別々に入れる
   var xDay = days.filter(function(d){
     return store[d.date] && store[d.date].state !== 'editing'; })[0];
   if (xDay){
     Object.assign(store[xDay.date], {
-      xKind:'譲渡', xPartner:'あおぞら薬局 北24条店', xMaker:'第一三共',
-      xDrug:'ロキソニン錠60mg', xPack:'PTP 100錠', xQty:'1箱',
-      xLot:'A4K21', xExpiry:'2028-03'
+      note: '調剤台の照度を測定（520lx）。基準内。',
+      xfers: [
+        { xKind:'譲渡', xPartner:'あおぞら薬局 北24条店', xMaker:'第一三共',
+          xDrug:'ロキソニン錠60mg', xPack:'PTP 100錠', xQty:'1箱',
+          xLot:'A4K21', xExpiry:'2028-03' },
+        { xKind:'譲受', xPartner:'きた薬局 麻生店', xMaker:'あゆみ製薬',
+          xDrug:'カロナール錠500mg', xPack:'PTP 100錠', xQty:'2箱',
+          xLot:'B7M03', xExpiry:'2027-11' }
+      ]
     });
   }
+  // 譲渡は無いが特記事項だけある日も入れておく
+  var nDay = days.filter(function(d){
+    return store[d.date] && store[d.date].state !== 'editing'; })[1];
+  if (nDay) store[nDay.date].note = '冷蔵庫の温度計を校正。';
 
   function week(anchor){
     var days = daysOf((anchor && anchor <= todayIso) ? anchor : todayIso);
@@ -3715,7 +3930,7 @@ var MOCK = (function(){
         var s = store[d.date] || { state:'empty' };
         return Object.assign({ date:d.date, dow:d.dow,
           rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
-          xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+          note:'', xfers:[],
           staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:'' }, s);
       })
     };
@@ -3730,7 +3945,7 @@ var MOCK = (function(){
            '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],
     sub: '譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/包装形態/譲渡数/Lot/使用期限',
     unitRx: '枚', unitInq: '件', phTemp: '℃　/', phHumid: '%',
-    col: { DATE:1, RX:2, INQ:4, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
+    col: { DATE:1, RX:2, INQ:4, MGMT:6, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
            STAFF:11, ADMIN:12, NOTE:2 }
   };
 
@@ -3767,7 +3982,7 @@ var MOCK = (function(){
           var r = Object.assign({
             date: day.date, dow: day.dow, hours:'10:00〜20:00',
             rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
-            xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+            note:'', xfers:[],
             staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:''
           }, s);
 
@@ -3776,8 +3991,7 @@ var MOCK = (function(){
           r.approver = r.admin;
           r.chief    = chiefOn(day.date);
           r.admin    = r.admin || r.chief;
-          r.note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
-            .map(function(k){ return r[k]; }).filter(function(x){ return x; }).join('／');
+          r.xfers = (r.xfers || []).map(function(x){ return Object.assign({}, x); });
           r.inMonth = (day.date >= mStart && day.date <= mEnd);
           r.future  = (day.date > todayIso);
 
@@ -3832,8 +4046,8 @@ var MOCK = (function(){
         rx:p.rx, inquiry:p.inquiry,
         roomTemp:p.roomTemp, roomHumid:p.roomHumid,
         coldTemp:p.coldTemp, coldHumid:p.coldHumid,
-        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
-        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        note: String(p.note || ''),
+        xfers: (p.xfers || []).map(function(x){ return Object.assign({}, x); }),
         staff: p.rowStaff || prev.staff || p.actor,
         savedAt: hh, admin:'', approvedAt:''
       };
@@ -3890,10 +4104,12 @@ var MOCK = (function(){
         seals: seals,
         rows: w.days.map(function(d){
           var filled = d.state === 'saved' || d.state === 'approved';
-          var note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
-            .map(function(k){ return d[k]; }).filter(function(x){ return x; }).join('／');
+          var lines = (d.xfers || []).map(function(x){
+            return ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
+              .map(function(k){ return x[k]; }).filter(function(v){ return v; }).join('／');
+          }).filter(function(v){ return v; });
           return { date:d.date, dow:d.dow, hours:'10:00〜20:00',
-            rx:d.rx, inquiry:d.inquiry, note:note,
+            rx:d.rx, inquiry:d.inquiry, note:d.note || '', xfers:lines,
             roomTemp:d.roomTemp, roomHumid:d.roomHumid,
             coldTemp:d.coldTemp, coldHumid:d.coldHumid,
             filled:filled, approved:d.state === 'approved',
@@ -4045,8 +4261,8 @@ var MOCK = (function(){
         rx:p.rx, inquiry:p.inquiry,
         roomTemp:p.roomTemp, roomHumid:p.roomHumid,
         coldTemp:p.coldTemp, coldHumid:p.coldHumid,
-        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
-        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        note: String(p.note || ''),
+        xfers: (p.xfers || []).map(function(x){ return Object.assign({}, x); }),
         staff:p.staff,
         savedAt: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
         admin:'', approvedAt:'' };
