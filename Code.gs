@@ -28,7 +28,10 @@
  *    checkSheets()           シートの列がそろっているかを確かめる
  *    checkPrintFit()         帳票が紙に収まるかを確かめる
  *    benchmarkExport()       出力のどこに時間がかかっているかを測る
- *    freezeLastMonth()       前月を確定する
+ *    freezeReadyWeeks()      確定できる週をまとめて確定する
+ *    setupNightlyFreeze()    夜間の自動確定を始める（トリガーを付ける）
+ *    stopNightlyFreeze()     夜間の自動確定をやめる（トリガーを外す）
+ *    nightlyStatus()         夜間の自動確定の状態を見る
  *    verifyFixes()           確定PDFが確定時のままかを確かめる
  *    sweepStaleLocks()       期限切れの編集ロックを掃除する
  *
@@ -43,8 +46,9 @@
  *     6. 週次帳票の出力
  *     7. 記録簿ビュー(監査用)
  *     8. 記録簿の入口
- *     9. 月次の確定(PDFに焼いて残す)
+ *     9. 週次の確定(PDFに焼いて残す)
  *    10. 証跡(ハッシュ)と、まとめて渡すZIP
+ *    11. 夜間の自動確定
  * ============================================================
  */
 
@@ -68,7 +72,7 @@ const CFG = {
 
   /** この Code.gs の版。貼り替えたときに version() で確かめられます。
    *  スプレッドシート側に貼った版が古いと、新しい関数が見つかりません */
-  VERSION: '2026-08-31',
+  VERSION: '2026-09-02',
 
   /** 店舗。多店舗化したときはコードで日報DBを分けます */
   STORE_CODE: 'SPK',
@@ -83,6 +87,16 @@ const CFG = {
 
   /** 週の始まり。0=日, 1=月 … 6=土。帳票が土曜始まりなので 6 */
   WEEK_START: 6,
+
+  /** 運用を始めた日。
+   *
+   *  週の途中から使い始めると、その週の頭には記録がありません。
+   *  そのままだと「未記録が3日あります」で永久に確定できず、
+   *  毎晩リマインドが飛び続けます。この日より前は数えません。
+   *
+   *  空にしておくと、いちばん古い記録の日を運用開始日とみなします。
+   *  ふだんは空のままで構いません。 */
+  START_DATE: '',
 
   /** 帳票の各日に印字する営業時間 */
   BUSINESS_HOURS: '10:00〜20:00',
@@ -212,6 +226,33 @@ const CFG = {
     EDGE_GAP_PX: 6
   },
 
+  /** 夜間の自動確定。
+   *
+   *  ENABLED     … false にすると、トリガーが動いても何もしません。
+   *                トリガーそのものは setupNightlyFreeze / stopNightlyFreeze で付け外しします。
+   *  HOUR        … 何時台に見にいくか。営業終了(20:00)より後にしてください。
+   *                GASの時間主導トリガーは「その時台のどこか」でしか動きません。
+   *  PER_NIGHT   … 一晩に確定する週の上限。溜まっているときに何週も焼くと、
+   *                1回の実行が長くなりすぎるためです。残りは翌晩に回ります。
+   *  MAX_WEEKS   … 見にいく週数の上限(暴走よけ)。300week ≒ 6年ぶん。
+   *                「どこまで確定したか」は確定台帳から数え直すので、
+   *                さかのぼる窓は設けていません。何週遅れても忘れません。
+   *  BUDGET_MS   … 1回の実行で帳票づくりに使ってよい時間。
+   *                GASの上限は6分なので、点検と後始末のぶんを残します。
+   *  STUCK_HOURS … 途中で止まったジョブを片づけるまでの時間。
+   *                これが無いと、一度こけたきり毎晩見送られ続けます。
+   *  NOTIFY      … 知らせ先。空ならトリガーを作った人のアドレスに送ります。
+   */
+  NIGHTLY: {
+    ENABLED: true,
+    HOUR: 23,
+    PER_NIGHT: 4,
+    MAX_WEEKS: 300,
+    BUDGET_MS: 3.5 * 60 * 1000,
+    STUCK_HOURS: 6,
+    NOTIFY: ''
+  },
+
   /** 印影PNGを入れるフォルダ名。スプレッドシートと同じ場所に自動作成します。
    *  ★ このフォルダは誰とも共有しないでください */
   SEAL_FOLDER_NAME: '業務日報_印影',
@@ -241,7 +282,7 @@ const COLS = {
   TERM:  ['ID', '担当者ID', '氏名', '就任日'],
   LOG:   ['日時', '操作', '内容', '操作者'],
   // 月次を確定してPDFに焼いた記録。1行 = 1つの版
-  FIX:   ['ID', '対象月', '版', '確定日時', '確定者',
+  FIX:   ['ID', '対象週', '対象月', '版', '確定日時', '確定者',
           'ファイル名', 'ファイルID', 'リンク',
           // 証跡。ハッシュ = PDFそのもの、連鎖 = 1つ前の連鎖とこの行をまとめたもの
           'ハッシュ', '連鎖', '状態', '備考'],
@@ -277,10 +318,9 @@ function setup() {
   ensureSheet_(SH.FIX,   COLS.FIX);
   ensureSheet_(SH.XFER,  COLS.XFER);
 
-  // 日付と就任日は文字列で持つ(タイムゾーンのずれで1日前後するのを避けるため)
-  formatTextColumn_(SH.DAILY, '日付');
-  formatTextColumn_(SH.TERM,  '就任日');
-  formatTextColumn_(SH.XFER,  '日付');
+  // 日付のたぐいは文字列で持つ。書式を付けずに '2026-08' や '2027-03' を書くと、
+  // スプレッドシートが日付として取り込んでしまい、読み戻したとき形が変わります
+  textColumns_();
 
   sealFolder_();   // 印影フォルダを作っておく
 
@@ -403,6 +443,101 @@ function checkSheets() {
   console.log('確認おわり');
 }
 
+/**
+ * 文字列で持つ列。書式を付けずに書くと、スプレッドシートが
+ * 日付や数値として取り込んでしまうものを並べています。
+ *
+ *   日付・就任月 … '2026-08-01' が Date になり、タイムゾーンで1日ずれる
+ *   対象月       … '2026-08' が Date になり、月の突き合わせが全部外れる
+ *   使用期限     … '2027-03' が Date になる
+ *   Lot          … '007' の頭の0が落ちる。'1-2' が日付になる
+ */
+const TEXT_COLS = [
+  [SH.DAILY, '日付'],
+  [SH.TERM,  '就任日'],
+  [SH.XFER,  '日付'],
+  [SH.XFER,  'Lot'],
+  [SH.XFER,  '使用期限'],
+  [SH.FIX,   '対象週'],
+  [SH.FIX,   '対象月']
+];
+
+/** 上の一覧をまとめて文字列書式にする。直したものの名前を返します */
+function textColumns_() {
+  const done = [];
+  const sized = {};
+  TEXT_COLS.forEach(function (x) {
+    if (!ss_().getSheetByName(x[0])) return;
+    if (!sized[x[0]]) { sized[x[0]] = true; ensureRowRoom_(x[0]); }
+    formatTextColumn_(x[0], x[1]);
+    done.push(x[0] + '.' + x[1]);
+  });
+  return done;
+}
+
+/** 空き行がこれを下回ったら足す / 一度に足す行数 */
+const ROW_ROOM = { MIN_FREE: 400, ADD: 2000 };
+
+/**
+ * 書式を付ける前に、行の空きを確かめる。
+ *
+ * 表示形式は「いまある行」にしか付きません。日報DBは1日1行増えるので、
+ * 作ったままの1000行だと3年ほどで書式の外へ出ます。そこから先の行が
+ * 書式を引き継ぐかどうかは環境しだいなので、引き継がなくても困らないように、
+ * 空きが少なくなったら先に行を足しておきます。
+ * (行を足すだけで、中身には触りません)
+ */
+function ensureRowRoom_(sheetName) {
+  const sh = ss_().getSheetByName(sheetName);
+  if (!sh) return 0;
+  const max = sh.getMaxRows();
+  const free = max - sh.getLastRow();
+  if (free >= ROW_ROOM.MIN_FREE) return 0;
+
+  sh.insertRowsAfter(max, ROW_ROOM.ADD);
+  console.log('シート「' + sheetName + '」に ' + ROW_ROOM.ADD + ' 行を足しました'
+    + '（空きが ' + free + ' 行になっていました）');
+  return ROW_ROOM.ADD;
+}
+
+/** あと何行書けるか。version() で知らせます */
+function rowRoomOf_(sheetName) {
+  const sh = ss_().getSheetByName(sheetName);
+  return sh ? sh.getMaxRows() - sh.getLastRow() : 0;
+}
+
+/**
+ * 確定台帳の「対象月」が日付で入っている行を、'2026-08' の形に戻す。
+ *
+ * 連鎖(ハッシュの鎖)は書いたときの文字列から作ってあるので、
+ * ここで形を戻すと照合がまた通るようになります。連鎖そのものは触りません
+ * (作り直すと、本当に書き換えられたときに気づけなくなるため)。
+ */
+function repairFixMonths_() {
+  const sh = ss_().getSheetByName(SH.FIX);
+  if (!sh) return 0;
+
+  const head = headerOf_(sh);
+  const col = head.indexOf('対象月') + 1;
+  if (!col) return 0;
+
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+
+  const range = sh.getRange(2, col, last - 1, 1);
+  range.setNumberFormat('@');            // 書き戻す前に文字列にしておく
+
+  const cur = range.getValues();
+  let n = 0;
+  const next = cur.map(function (row) {
+    const want = monthOf_(row[0]);
+    if (want && want !== row[0]) n++;
+    return [want || row[0]];
+  });
+  if (n) range.setValues(next);
+  return n;
+}
+
 function formatTextColumn_(sheetName, colName) {
   const sh = ss_().getSheetByName(sheetName);
   const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
@@ -486,11 +621,71 @@ function fmt_(v) {
   return isNaN(d.getTime()) ? '' : Utilities.formatDate(d, CFG.TZ, 'yyyy-MM-dd');
 }
 
+/**
+ * '2026-08' に揃える。
+ *
+ * 「対象月」の列に文字列書式が無いと、スプレッドシートが '2026-08' を
+ * 日付として取り込んでしまい、読み戻すと Date になっています。
+ * どちらで入っていても同じ形で返すので、古いブックでもそのまま動きます。
+ */
+function monthOf_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, CFG.TZ, 'yyyy-MM');
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  const m = s.match(/^(\d{4})[-\/](\d{1,2})/);
+  if (m) return m[1] + '-' + ('0' + m[2]).slice(-2);
+  const d = new Date(s);                     // 'Wed Aug 01 2026 …' の形
+  return isNaN(d.getTime()) ? s : Utilities.formatDate(d, CFG.TZ, 'yyyy-MM');
+}
+
 function addDays_(iso, n) {
   const p = iso.split('-');
   const d = new Date(+p[0], +p[1] - 1, +p[2]);
   d.setDate(d.getDate() + n);
   return Utilities.formatDate(d, CFG.TZ, 'yyyy-MM-dd');
+}
+
+/** この実行のあいだだけ覚えておく(日報DBを何度も読まないため) */
+let START_DATE_CACHE = null;
+
+/**
+ * 運用を始めた日。設定が空なら、いちばん古い記録の日にします。
+ *
+ * この日より前は「記録される予定が無かった日」なので、
+ * 週がそろっているかを見るときに数えません。
+ */
+function startDate_(idx) {
+  if (CFG.START_DATE) return fmt_(CFG.START_DATE);
+  if (START_DATE_CACHE !== null) return START_DATE_CACHE;
+
+  const i = idx || dailyIndex_();
+  let first = '';
+  Object.keys(i.map).forEach(function (d) {
+    const st = String(i.map[d]['状態'] || '');
+    if (st !== '入力済' && st !== '承認済') return;
+    if (!first || d < first) first = d;
+  });
+  START_DATE_CACHE = first;
+  return first;
+}
+
+/** その週の終わりの日 */
+function weekEnd_(weekStart) { return addDays_(weekStart, 6); }
+
+/**
+ * その週が属する月。
+ *
+ * 週は月をまたぐので、4日目(週の真ん中)がある月に属することにします。
+ * 7日のうち4日以上がその月にあるので、迷いようがありません。
+ * 画面で月ごとに並べるためだけに使い、識別子は週の初日です。
+ */
+function weekMonth_(weekStart) { return addDays_(weekStart, 3).slice(0, 7); }
+
+/** 画面に出す週の呼び名。「第N週」とは呼びません(誰も週番号では探さないので) */
+function weekLabel_(weekStart) {
+  const e = weekEnd_(weekStart);
+  return weekStart.replace(/-/g, '/') + '〜'
+    + (weekStart.slice(0, 4) === e.slice(0, 4) ? mdOf_(e) : e.replace(/-/g, '/'));
 }
 
 /** その日を含む週の初日('yyyy-MM-dd') */
@@ -1442,6 +1637,16 @@ function version() {
   say('   ［' + T_().SHEET + '］'
     + (ss_().getSheetByName(T_().SHEET) ? 'あります' : 'ありません'));
 
+  // 文字列書式は「いまある行」にしか付かないので、空きが尽きる前に知らせる
+  say('');
+  say('■ 行の空き');
+  [SH.DAILY, SH.XFER, SH.FIX].forEach(function (n) {
+    if (!ss_().getSheetByName(n)) return;
+    const free = rowRoomOf_(n);
+    say('   ［' + n + '］あと ' + free + ' 行'
+      + (free < ROW_ROOM.MIN_FREE ? '　★ updateDatabase を実行して足してください' : ''));
+  });
+
   const legacy = LEGACY_XFER_COLS.filter(function (c) {
     const sh = ss_().getSheetByName(SH.DAILY);
     return sh && headerOf_(sh).indexOf(c) >= 0;
@@ -1499,10 +1704,14 @@ function updateDatabase() {
 
   say('');
   say('■ 日付の書式');
-  formatTextColumn_(SH.DAILY, '日付');
-  formatTextColumn_(SH.TERM,  '就任日');
-  formatTextColumn_(SH.XFER,  '日付');
-  say('   日報DB.日付 / 管理薬剤師任期.就任日 / 譲渡記録.日付 を文字列にしました');
+  textColumns_().forEach(function (c) { say('   ' + c + ' を文字列にしました'); });
+
+  say('');
+  say('■ 確定台帳の対象月');
+  const fixed = repairFixMonths_();
+  say(fixed
+    ? '   日付になっていた ' + fixed + ' 行を 2026-08 の形に戻しました'
+    : '   直すものはありませんでした');
 
   say('');
   say('■ 印影フォルダ');
@@ -1598,6 +1807,9 @@ const PRINT = {
   RATE_KEY: 'EXPORT_SEC_PER_WEEK',   // 1週あたりの実測(次回の見込みに使う)
   OUT_FOLDER: '業務日報_出力',
   TIME_BUDGET_MS: 4.5 * 60 * 1000,   // 6分の上限に対して余裕を取る
+  // 次の1週を始めてよいか決めるときの見込み。
+  // いちばん遅かった週の何倍を見込むか。1.0だと、たまたま遅い週で越えます
+  WEEK_MARGIN: 1.5,
   DAY_ROWS: 7
 };
 
@@ -2289,11 +2501,17 @@ function startExport_(p) {
 }
 
 /** 続きを処理する。時間が来たら止まるので、完了まで繰り返し呼びます */
-function runExportChunk() {
+/**
+ * @param {number} [budgetMs] この呼び出しで使ってよい時間。
+ *        画面から呼ぶときは渡しません(既定の 4.5 分)。
+ *        夜間の自動確定は、点検と後始末のぶんを残すため短くして渡します。
+ */
+function runExportChunk(budgetMs) {
   return guard_('runExportChunk', function () {
     const job = currentJob_();
     if (!job || job.state !== 'running') return job;
 
+    const budget = Number(budgetMs) > 0 ? Number(budgetMs) : PRINT.TIME_BUDGET_MS;
     const t0 = Date.now();
     const temp = SpreadsheetApp.openById(job.tempId);
     const idx = dailyIndex_();
@@ -2313,18 +2531,38 @@ function runExportChunk() {
       base.count[k.full]  = (base.count[k.full]  || 0) + 1;
     }
 
+    // 1週にかかった時間。実行をまたいで引き継ぐので、続きの回でも効きます
+    let slowest = Number(job.weekMs) || 0;
+    const first = job.done;
+
     try {
-      while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
+      while (job.done < job.weeks.length) {
+        const used = Date.now() - t0;
+        if (used >= budget) break;
+
+        // 上限の手前で1週を始めると、その1週ぶん上限を飛び越えます。
+        // 2週目からは「いちばん遅かった週がもう1回入る余地」を求めます。
+        // 1回につき最低1週は進めます(でないと続きを呼んでも進みません)。
+        if (job.done > first && slowest && used + slowest * PRINT.WEEK_MARGIN > budget) break;
+
+        const w0 = Date.now();
         const w = job.weeks[job.done];
         const rows = weekRows_(w, idx, terms, xi);
         const b = sealBase_(temp, tpl, rows, seals, geo, base);
         renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
+        const took = Date.now() - w0;
+        if (took > slowest) slowest = took;
+
         job.done++;
+        job.weekMs = slowest;
         PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
       }
 
       if (job.done >= job.weeks.length) {
         finishExport_(job, temp);
+        // まとめて確定しているときは、続けて次の週を焼きます
+        const next = freezeQueueNext_(job);
+        if (next) return next;
       }
     } catch (err) {
       // 途中で落ちたまま放っておくと、一時ファイルがドライブに残り、
@@ -2444,11 +2682,13 @@ function printFit_() {
  *    1週間ぶんだけ作って、複製・値の書き込み・印影に分けて出します。
  *    速くしたいときは、まずこれで当たりを付けてください。
  */
-function benchmarkExport() {
+/** @param {string} [anchorIso] 測る週。渡さなければ先週を測ります */
+function benchmarkExport(anchorIso) {
   const idx = dailyIndex_();
   const terms = termList_();
   const tpl = templateSheet_();
-  const start = addDays_(weekStart_(today_()), -7);   // 先週(記録がある想定)
+  // 渡されたらその週、無ければ先週(記録がある想定)
+  const start = anchorIso ? weekStart_(fmt_(anchorIso)) : addDays_(weekStart_(today_()), -7);
 
   let t0 = Date.now();
   const seals = sealBlobMap_();
@@ -2476,6 +2716,18 @@ function benchmarkExport() {
 
     renderWeekSheet_(temp, start, rows, seals, geo, b.sheet, b, timing);
     SpreadsheetApp.flush();
+
+    // 下ごしらえで何コマ押したか。ここから「1コマあたり何秒か」が出せます。
+    // 使い回しが効かない月では、この時間がそのまま毎週かかります
+    let baseStamps = 0;
+    rows.forEach(function (r) {
+      if (b.adminDone && seals[r.admin]) baseStamps++;
+      if (b.staffDone && seals[r.staff]) baseStamps++;
+    });
+    timing.setup = tSeals + tGeo + tCreate;   // 1回だけかかるもの
+    timing.base = tBase;                      // 下ごしらえ(押印そのもの)
+    timing.baseStamps = baseStamps;
+    timing.stampMs = baseStamps ? tBase / baseStamps : 0;
 
     const total = tSeals + tGeo + tCreate + tBase
       + (timing.copy || 0) + (timing.values || 0) + (timing.seals || 0);
@@ -2718,6 +2970,12 @@ function monthEnd_(iso) {
   return Utilities.formatDate(new Date(+p[0], +p[1], 0), CFG.TZ, 'yyyy-MM-dd');
 }
 
+/** 'yyyy-MM-dd' を '8/31' にする(画面に出す短い表記) */
+function mdOf_(iso) {
+  const p = String(iso || '').split('-');
+  return p.length === 3 ? (+p[1]) + '/' + (+p[2]) : String(iso || '');
+}
+
 /** 管理基準を外れている項目を並べる */
 function rangeAlerts_(d) {
   const out = [];
@@ -2784,6 +3042,7 @@ function ledgerPayload_(anchorIso) {
   });
 
   const hasTemplate = !!ss_().getSheetByName(T_().SHEET);
+  const fixes = fixList_();          // 週ごとの確定状態を作るので、1回だけ読む
   const stat = { days: 0, filled: 0, approved: 0, missing: 0, alerts: 0, future: 0 };
   const alertList = [];
   const weeks = [];
@@ -2833,7 +3092,9 @@ function ledgerPayload_(anchorIso) {
         alertList.push({ date: iso, dow: row.dow, items: row.alerts });
       }
     }
-    weeks.push({ start: w, end: addDays_(w, 6), rows: rows });
+    // 週ごとの確定の状態。確定は週の単位なので、判定もここで持ちます
+    weeks.push({ start: w, end: addDays_(w, 6), label: weekLabel_(w),
+                 rows: rows, freeze: freezeCheck_(w, idx, terms, fixes) });
     w = addDays_(w, 7);
   }
 
@@ -2856,7 +3117,37 @@ function ledgerPayload_(anchorIso) {
     weeks: weeks,
     stat: stat,
     alerts: alertList,
-    freeze: freezeCheck_(mStart.slice(0, 7), idx, terms)
+    // 月ぜんたいの見出し。確定そのものは週ごとです
+    freeze: monthFreeze_(weeks)
+  };
+}
+
+/**
+ * その月に並んでいる週の、確定の様子をまとめる。
+ * 「この月の確定」という物はもう無いので、数だけを見出しに出します。
+ */
+function monthFreeze_(weeks) {
+  const ready = weeks.filter(function (w) { return !w.freeze.frozen && w.freeze.ok; });
+  const wait  = weeks.filter(function (w) { return !w.freeze.frozen && !w.freeze.ok; });
+  const done  = weeks.filter(function (w) { return w.freeze.frozen; });
+  return {
+    total: weeks.length,
+    frozen: done.length,
+    ready: ready.length,
+    waiting: wait.length,
+    readyWeeks: ready.map(function (w) {
+      return { week: w.start, label: w.label, nextVersion: w.freeze.nextVersion };
+    }),
+    // 確定済みでも、記録を直したら作り直せます。そのための一覧
+    frozenWeeks: done.map(function (w) {
+      return { week: w.start, label: w.label,
+               version: w.freeze.latest.version,
+               nextVersion: w.freeze.nextVersion };
+    }),
+    // まだ確定できない週の理由。多いと読めないので、先の3週ぶんだけ
+    waitingWeeks: wait.slice(0, 3).map(function (w) {
+      return { week: w.start, label: w.label, reasons: w.freeze.reasons };
+    })
   };
 }
 
@@ -2958,7 +3249,7 @@ function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function ()
 
 
 /* ############################################################
-   9. 月次の確定(PDFに焼いて残す)
+   9. 週次の確定(PDFに焼いて残す)
    ############################################################
    日々の記録は「データ」が正本で、画面(記録簿ビュー)から毎回描き直します。
    ただしそれだけだと、あとから印影を差し替えたりテンプレートの列幅を
@@ -2966,25 +3257,35 @@ function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function ()
    監査で「これは当時のものです」と言えなくなるため、月が締まった時点で
    1回だけPDFに焼き、それを残します。
 
-   ・確定できるのは「月が終わっていて、未記録が無く、全日が承認済み」のときだけ
+   確定の単位は「週」です。帳票が1週=1ページの様式だからです。
+   月でまとめて焼いていたころは、月境の週が2つの月のPDFに入り(年10ページ)、
+   しかもその2枚の中身が食い違いました(1月のPDFは2/1〜6が空欄のまま確定)。
+   さらに境界の11日ぶんは、承認を確かめずに焼かれていました。
+   週は暦を過不足なく分けるので、週で焼けばどれも起きません。
+
+   ・確定できるのは「その週の最終日を迎えていて、7日とも記録・承認済み」のときだけ
+     最終日の営業終了時に締めるので、最終日当日から押せます
+   ・週の呼び方は日付の範囲(2026/01/03〜1/9)です。週番号では呼びません
    ・訂正が出たら、承認を解除して直し、もう一度確定する。
      前の版は消さず、新しい版として積み増します(v1, v2, …)
    ・変更履歴シートに「何をなぜ直したか」が残るので、版と履歴が対応します
 
    確定PDFは 業務日報_出力/<年>/ に、次の名前で入ります。
-     2026-08_業務日報_v2_確定20260915.pdf
+     2026-01-03_業務日報_v2_確定20260115.pdf（週の初日の名前）
    ############################################################ */
 
-/** その月の記録の埋まり具合。記録簿を作るときは idx / terms を渡して読み直しを避けます */
-function monthStats_(month, idx, terms) {
-  const mStart = month + '-01';
-  const mEnd = monthEnd_(mStart);
+/** その週の記録の埋まり具合。記録簿を作るときは idx / terms を渡して読み直しを避けます */
+function weekStats_(weekStart, idx, terms) {
   const i = idx || dailyIndex_();
   const tm = terms || termList_();
-  const out = { month: month, start: mStart, end: mEnd,
-                days: 0, filled: 0, approved: 0, missing: 0 };
+  const from = startDate_(i);          // これより前は記録される予定が無かった日
+  const out = { week: weekStart, start: weekStart, end: weekEnd_(weekStart),
+                month: weekMonth_(weekStart),
+                days: 0, filled: 0, approved: 0, missing: 0, outside: 0 };
 
-  for (let d = mStart; d <= mEnd; d = addDays_(d, 1)) {
+  for (let k = 0; k < PRINT.DAY_ROWS; k++) {
+    const d = addDays_(weekStart, k);
+    if (from && d < from) { out.outside++; continue; }   // 運用を始める前
     out.days++;
     const day = toDay_(d, i.map[d], tm);
     if (day.state === 'empty' || day.state === 'editing') { out.missing++; continue; }
@@ -2998,9 +3299,16 @@ function monthStats_(month, idx, terms) {
 function fixList_() {
   const t = table_(SH.FIX);
   return t.rows.map(function (r) {
+    // 旧い行は月で確定していたので、対象週が空です。そのときは月をそのまま見せます
+    const week = fmt_(r['対象週']);
+    const month = monthOf_(r['対象月']);
     return {
       id: String(r['ID']),
-      month: String(r['対象月']),
+      week: week,
+      month: week ? weekMonth_(week) : month,
+      label: week ? weekLabel_(week) : (month + '（月まるごと・旧い形）'),
+      legacy: !week,
+      key: week || month,                   // 連鎖に混ぜる識別子
       version: Number(r['版']) || 0,
       at: (r['確定日時'] instanceof Date)
         ? Utilities.formatDate(r['確定日時'], CFG.TZ, 'yyyy/MM/dd HH:mm')
@@ -3016,14 +3324,14 @@ function fixList_() {
       _row: r._row
     };
   }).sort(function (a, b) {
-    if (a.month !== b.month) return a.month < b.month ? 1 : -1;   // 新しい月が先
-    return b.version - a.version;                                  // 新しい版が先
+    if (a.key !== b.key) return a.key < b.key ? 1 : -1;   // 新しい週が先
+    return b.version - a.version;                          // 新しい版が先
   });
 }
 
-/** その月の版だけ(新しい順) */
-function fixOf_(month, all) {
-  return (all || fixList_()).filter(function (x) { return x.month === month; });
+/** その週の版だけ(新しい順) */
+function fixOf_(weekStart, all) {
+  return (all || fixList_()).filter(function (x) { return x.week === weekStart; });
 }
 
 /** 次に付ける版番号。取り消した版も番号は使い切ります(番号を再利用しない) */
@@ -3032,22 +3340,28 @@ function nextVersion_(versions) {
 }
 
 /**
- * その月を確定できるか。できないときは理由を並べて返します。
+ * その週を確定できるか。できないときは理由を並べて返します。
  * 画面はこれをそのまま出すので、理由は運用者が読んで動ける言葉にしています。
  */
-function freezeCheck_(month, idx, terms) {
-  const stat = monthStats_(month, idx, terms);
-  const versions = fixOf_(month);
+function freezeCheck_(weekStart, idx, terms, all) {
+  const w = weekStart_(fmt_(weekStart));        // 週の途中を渡されても初日に直す
+  const stat = weekStats_(w, idx, terms);
+  const versions = fixOf_(w, all);
   const live = versions.filter(function (x) { return x.alive; });
   const reasons = [];
 
-  if (stat.end >= today_()) reasons.push('その月がまだ終わっていません');
+  // 最終日の営業終了時に締める運用なので、最終日当日は確定できます
+  if (stat.end > today_()) {
+    reasons.push('確定できるのは ' + mdOf_(stat.end) + ' からです');
+  }
   if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
   const unapproved = stat.filled - stat.approved;
   if (unapproved) reasons.push('未承認が ' + unapproved + ' 日あります');
 
   return {
-    month: month,
+    week: w,
+    label: weekLabel_(w),
+    month: stat.month,
     stat: stat,
     unapproved: unapproved,
     versions: versions,
@@ -3069,11 +3383,12 @@ function recordFix_(job, file) {
   const t = table_(SH.FIX);
   const at = new Date();
   const hash = sha256Bytes_(file.getBlob().getBytes());
-  const chain = chainOf_(lastChain_(t), job.month, job.version, at, hash);
+  const chain = chainOf_(lastChain_(t), job.week, job.version, at, hash);
 
   appendRow_(t, {
     'ID': uid_('F'),
-    '対象月': job.month,
+    '対象週': job.week,
+    '対象月': weekMonth_(job.week),
     '版': job.version,
     '確定日時': at,
     '確定者': job.actor || '',
@@ -3085,23 +3400,23 @@ function recordFix_(job, file) {
     '状態': '有効',
     '備考': String(job.note || '')
   });
-  audit_('月次を確定', job.month + '（第' + job.version + '版）'
+  audit_('週を確定', weekLabel_(job.week) + '（第' + job.version + '版）'
     + '／SHA-256 ' + hash.slice(0, 16) + '…'
     + (job.note ? '：' + job.note : ''), job.actor || '');
 }
 
 /**
- * 月次の確定を始める。あとは runExportChunk を繰り返すだけで、
- * 期間指定の出力と同じ仕組みで進みます。
+ * 週の確定を始める。あとは runExportChunk を繰り返すだけで、
+ * 期間指定の出力と同じ仕組みで進みます(1週ぶんなので、たいてい1回で終わります)。
  */
 function startFreeze(p) {
   return guard_('startFreeze', function () {
-    const month = String(p.month || '').slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('対象月が正しくありません');
+    const w = weekStart_(fmt_(p.week || ''));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(w)) throw new Error('対象の週が正しくありません');
 
-    const chk = freezeCheck_(month);
+    const chk = freezeCheck_(w);
     if (!chk.ok) {
-      throw new Error('この月はまだ確定できません：' + chk.reasons.join('／'));
+      throw new Error('この週はまだ確定できません：' + chk.reasons.join('／'));
     }
     // 2回目以降は、なぜもう一度確定するのかを残してもらう
     const note = String(p.note || '').trim();
@@ -3114,12 +3429,13 @@ function startFreeze(p) {
     const job = startExport_({
       from: chk.stat.start,
       to: chk.stat.end,
-      title: month + '_業務日報_v' + v
+      title: w + '_業務日報_v' + v
         + '_確定' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyyMMdd'),
       actor: p.actor
     });
     job.kind = 'freeze';
-    job.month = month;
+    job.week = w;
+    job.month = chk.month;
     job.version = v;
     job.note = note;
     PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
@@ -3146,29 +3462,126 @@ function voidFix(p) {
       '状態': '取消',
       '備考': String(row['備考'] || '') + (row['備考'] ? ' / ' : '') + '取消：' + why
     });
+    const w = fmt_(row['対象週']);
     audit_('確定を取り消し',
-      String(row['対象月']) + '（第' + row['版'] + '版）：' + why, p.actor || '');
+      (w ? weekLabel_(w) : monthOf_(row['対象月']))
+      + '（第' + row['版'] + '版）：' + why, p.actor || '');
     return fixPayload_();
   });
 }
 
-/** 確定簿の画面に渡す形 */
+/**
+ * 確定簿の画面に渡す形。
+ *
+ * 並べ方は「月の見出し ＋ その下に週」です。誰も週番号では探さないので、
+ * 週は日付の範囲(2026/01/03〜01/09)で見せます。
+ */
 function fixPayload_() {
   const all = fixList_();
   const byMonth = {};
   all.forEach(function (x) {
     (byMonth[x.month] = byMonth[x.month] || []).push(x);
   });
+
   const months = Object.keys(byMonth).sort().reverse().map(function (m) {
-    const live = byMonth[m].filter(function (x) { return x.alive; });
+    // 同じ週の版をまとめる
+    const byWeek = {};
+    byMonth[m].forEach(function (x) { (byWeek[x.key] = byWeek[x.key] || []).push(x); });
+    const weeks = Object.keys(byWeek).sort().reverse().map(function (k) {
+      const live = byWeek[k].filter(function (x) { return x.alive; });
+      return {
+        week: byWeek[k][0].week,
+        label: byWeek[k][0].label,
+        legacy: byWeek[k][0].legacy,
+        versions: byWeek[k],
+        latest: live.length ? live[0] : null
+      };
+    });
     return {
       month: m,
       label: m.slice(0, 4) + '年' + Number(m.slice(5, 7)) + '月',
-      versions: byMonth[m],
-      latest: live.length ? live[0] : null
+      weeks: weeks,
+      alive: weeks.filter(function (w) { return w.latest; }).length,
+      total: weeks.length
     };
   });
-  return { store: CFG.STORE_NAME, today: today_(), months: months };
+
+  return {
+    store: CFG.STORE_NAME,
+    today: today_(),
+    months: months,
+    // まとめて渡すときの既定の期間(いちばん新しい月まるごと)
+    range: months.length
+      ? { from: months[0].month + '-01', to: monthEnd_(months[0].month + '-01') }
+      : { from: monthStart_(today_()), to: monthEnd_(today_()) }
+  };
+}
+
+/**
+ * 画面から呼ぶ入口。選ばれた週を、順に確定していきます。
+ *
+ * 1週 = 1PDF なので、まとめて確定するときは1週ずつ焼きます。
+ * 1つ終わると runExportChunk が次を始めるので、画面は同じ帯を見ているだけで済みます。
+ *
+ * @param {Object} p { weeks:['2026-01-03', …], note:'', actor:'' }
+ */
+function freezeWeeks(p) {
+  return guard_('freezeWeeks', function () {
+    const list = (p.weeks || []).map(function (w) { return weekStart_(fmt_(w)); })
+      .filter(function (w) { return /^\d{4}-\d{2}-\d{2}$/.test(w); })
+      .sort();
+    if (!list.length) throw new Error('確定する週が選ばれていません');
+
+    const job = startFreeze({ week: list[0], note: p.note, actor: p.actor });
+    job.queue = list.slice(1);       // まだ焼いていない週
+    job.frozen = [];                 // 焼き終えた週
+    job.pages = list.length;         // ぜんぶで何週か(画面の進み具合に使う)
+    job.label = weekLabel_(list[0]);
+    job.note = String(p.note || '');
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    return job;
+  });
+}
+
+/**
+ * 1週ぶんが焼き上がったら、待っている次の週を始める。
+ * 全部終わっていれば null を返します(呼び元がそのまま完了として扱います)。
+ */
+function freezeQueueNext_(job) {
+  if (job.kind !== 'freeze' || job.state !== 'done') return null;
+
+  const frozen = (job.frozen || []).concat([{
+    week: job.week, label: weekLabel_(job.week),
+    version: job.version, url: job.pdfUrl
+  }]);
+  const queue = (job.queue || []).slice();
+
+  if (!queue.length) {
+    job.frozen = frozen;
+    job.queue = [];
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    return null;
+  }
+
+  const w = queue.shift();
+  const chk = freezeCheck_(w);
+  if (chk.frozen || !chk.ok) {      // 待っているあいだに条件が変わったら飛ばす
+    console.log(weekLabel_(w) + ' は対象から外れました');
+    job.frozen = frozen;
+    job.queue = queue;
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    return freezeQueueNext_(job);
+  }
+
+  const next = startFreeze({ week: w, note: job.note, actor: job.actor });
+  next.queue = queue;
+  next.frozen = frozen;
+  next.pages = job.pages;
+  next.label = weekLabel_(w);
+  next.note = job.note;
+  if (job.auto) next.auto = true;
+  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(next));
+  return next;
 }
 
 /* ---------- 画面から呼ばれる入口 ---------- */
@@ -3177,30 +3590,95 @@ function getFixList() { return guard_('getFixList', function () {
   return fixPayload_();
 }); }
 
-function getFreezeState(month) { return guard_('getFreezeState', function () {
-  return freezeCheck_(String(month || today_()).slice(0, 7));
+function getFreezeState(week) { return guard_('getFreezeState', function () {
+  return freezeCheck_(week || today_());
 }); }
 
 /**
- * ★ 手で実行して、前月を確定します。画面から確定するのと同じ経路を通ります。
+ * その期間にかかる週を並べる。まとめて渡すときと、記録簿の表示に使います。
+ * 期間に少しでもかかる週を入れます(週は切り分けられないので)。
  */
-function freezeLastMonth() {
-  const now = new Date();
-  const m = Utilities.formatDate(new Date(now.getFullYear(), now.getMonth() - 1, 1),
-                                 CFG.TZ, 'yyyy-MM');
-  const chk = freezeCheck_(m);
-  if (!chk.ok) {
-    console.log('［' + m + '］まだ確定できません：' + chk.reasons.join(' / '));
-    return chk;
+function weeksTouching_(fromIso, toIso) {
+  const from = fmt_(fromIso), to = fmt_(toIso);
+  if (!from || !to) throw new Error('期間が正しくありません');
+  if (from > to) throw new Error('開始日が終了日より後になっています');
+  return weeksBetween_(from, to);
+}
+
+/**
+ * ★ 手で実行して、確定できる週をまとめて確定します。
+ *    画面から確定するのと同じ経路を通ります。
+ */
+function freezeReadyWeeks() {
+  const list = readyWeeks_();
+  if (!list.length) {
+    console.log('いま確定できる週はありません');
+    return [];
   }
-  clearExport();
-  startFreeze({ month: m, actor: '手動実行', note: chk.frozen ? '手動で作り直し' : '' });
-  let job = runExportChunk();
-  while (job && job.state === 'running') job = runExportChunk();
-  console.log(job && job.state === 'done'
-    ? '［' + m + '］第' + job.version + '版を確定しました: ' + job.pdfUrl
-    : '確定できませんでした: ' + ((job && job.message) || '理由不明'));
-  return job;
+  console.log('確定できる週が ' + list.length + ' 週あります');
+  const done = [];
+  list.forEach(function (chk) {
+    clearExport();
+    startFreeze({ week: chk.week, actor: '手動実行',
+                  note: chk.frozen ? '手動で作り直し' : '' });
+    let job = runExportChunk();
+    while (job && job.state === 'running') job = runExportChunk();
+    console.log('  ' + weekLabel_(chk.week) + ' … '
+      + (job && job.state === 'done'
+        ? '第' + job.version + '版 ' + job.pdfUrl
+        : '失敗: ' + ((job && job.message) || '理由不明')));
+    if (job && job.state === 'done') done.push(job);
+  });
+  return done;
+}
+
+/**
+ * まだ確定していない週を、古い順に並べる。
+ *
+ * 「どこまで済んだか」は確定台帳そのものが持っています。別に覚え書きを
+ * 置くと、台帳と食い違ったとき(版を取り消した、行を消した…)にどちらが
+ * 正しいか分からなくなるので、毎回そこから数え直します。
+ *
+ * 見るのは「記録が1日でもある週」だけです。そうしておくと
+ *   ・運用を始める前の週    … 記録が無いので入らない
+ *   ・まだ来ていない週      … 同じく入らない
+ *   ・承認が何週も遅れた週  … 記録はあるので、いつまでも見つかる
+ * となり、さかのぼる窓を決めずに済みます。
+ */
+function openWeeks_(idx, terms, all) {
+  const i = idx || dailyIndex_();
+  const tm = terms || termList_();
+  const fx = all || fixList_();
+
+  // 確定済みの週(取り消していない版があるもの)
+  const done = {};
+  fx.forEach(function (x) { if (x.alive && x.week) done[x.week] = true; });
+
+  // 記録がある週。入力中の置き札だけの日は数えません
+  const has = {};
+  let first = '';
+  Object.keys(i.map).forEach(function (d) {
+    const st = String(i.map[d]['状態'] || '');
+    if (st !== '入力済' && st !== '承認済') return;
+    const w = weekStart_(d);
+    has[w] = true;
+    if (!first || w < first) first = w;
+  });
+  if (!first) return [];
+
+  const out = [];
+  const last = weekStart_(today_());
+  let w = first, guard = 0;
+  while (w <= last && guard++ < CFG.NIGHTLY.MAX_WEEKS) {
+    if (has[w] && !done[w]) out.push(freezeCheck_(w, i, tm, fx));
+    w = addDays_(w, 7);
+  }
+  return out;
+}
+
+/** いま確定できる週(古い順)。まだ確定していないものだけ */
+function readyWeeks_() {
+  return openWeeks_().filter(function (c) { return c.ok; });
 }
 
 
@@ -3247,10 +3725,13 @@ function lastChain_(t) {
   return String(tb.rows[tb.rows.length - 1]['連鎖'] || '');
 }
 
-/** 1行ぶんの連鎖を作る。1つ前の連鎖を混ぜるので、途中を書き換えると以降が合わなくなる */
-function chainOf_(prev, month, version, at, hash) {
+/**
+ * 1行ぶんの連鎖を作る。1つ前の連鎖を混ぜるので、途中を書き換えると以降が合わなくなる。
+ * @param {string} key 対象週('2026-01-03')。月で確定していた旧い行は月('2026-01')
+ */
+function chainOf_(prev, key, version, at, hash) {
   const atIso = (at instanceof Date) ? at.toISOString() : String(at);
-  return sha256Text_([prev, month, version, atIso, hash].join('|'));
+  return sha256Text_([prev, key, version, atIso, hash].join('|'));
 }
 
 /**
@@ -3269,11 +3750,15 @@ function verifyFixes_() {
   let bad = 0;
 
   rows.forEach(function (r) {
-    const month = String(r['対象月']);
+    // 旧い行(月で確定したもの)は対象週が空。連鎖もそのときの識別子で作ってあります
+    const week = fmt_(r['対象週']);
+    const key = week || monthOf_(r['対象月']);
     const version = Number(r['版']) || 0;
     const hash = String(r['ハッシュ'] || '');
     const chain = String(r['連鎖'] || '');
-    const item = { month: month, version: version, name: String(r['ファイル名'] || ''),
+    const item = { week: week, key: key,
+                   label: week ? weekLabel_(week) : (key + '（月まるごと・旧い形）'),
+                   version: version, name: String(r['ファイル名'] || ''),
                    alive: String(r['状態'] || '有効') !== '取消',
                    state: 'ok', detail: '' };
 
@@ -3295,7 +3780,7 @@ function verifyFixes_() {
           item.detail = 'PDFの中身が確定時と違います';
         } else {
           // 2. 台帳そのものが書き換えられていないか
-          const want = chainOf_(prev, month, version, r['確定日時'], hash);
+          const want = chainOf_(prev, key, version, r['確定日時'], hash);
           if (chain && want !== chain) {
             item.state = 'broken';
             item.detail = '台帳の記録が書き換えられています';
@@ -3313,7 +3798,7 @@ function verifyFixes_() {
                   changed: '中身が変わっている', broken: '台帳が書き換えられている' };
   console.log('■ 確定PDFの証跡（' + rows.length + ' 件）');
   out.forEach(function (x) {
-    console.log('   ' + x.month + ' v' + x.version + (x.alive ? '' : '(取消)')
+    console.log('   ' + x.label + ' v' + x.version + (x.alive ? '' : '(取消)')
       + ' … ' + label[x.state] + (x.detail ? ' … ' + x.detail : ''));
   });
   console.log('   ────────────────');
@@ -3334,20 +3819,20 @@ function backfillFixHashes() {
   let prev = '';
   t.rows.forEach(function (r) {
     let hash = String(r['ハッシュ'] || '');
-    const month = String(r['対象月']);
+    const key = fmt_(r['対象週']) || monthOf_(r['対象月']);
     const version = Number(r['版']) || 0;
 
     if (!hash) {
       try {
         hash = sha256Bytes_(DriveApp.getFileById(String(r['ファイルID'])).getBlob().getBytes());
       } catch (e) {
-        console.warn(month + ' v' + version + ' のPDFを読めませんでした');
+        console.warn(key + ' v' + version + ' のPDFを読めませんでした');
         prev = String(r['連鎖'] || '');
         return;
       }
       n++;
     }
-    const chain = chainOf_(prev, month, version, r['確定日時'], hash);
+    const chain = chainOf_(prev, key, version, r['確定日時'], hash);
     const note = String(r['備考'] || '');
     writeRow_(t, r._row, {
       'ハッシュ': hash,
@@ -3366,10 +3851,14 @@ function backfillFixHashes() {
  * ---------------------------------------------------------- */
 
 /** ZIPに入れる目録。どのPDFが何のハッシュなのかを平文で残します */
-function bundleManifest_(items, from, to, actor) {
+function bundleManifest_(items, from, to, actor, missing) {
   const line = [];
   line.push(CFG.STORE_NAME + '　業務日報');
-  line.push('対象期間 : ' + from + ' 〜 ' + to);
+  line.push('お求めの期間 : ' + from + ' 〜 ' + to);
+  line.push('この束の範囲 : ' + weekStart_(from) + ' 〜 ' + weekEnd_(weekStart_(to))
+    + '（' + items.length + '週ぶんのPDFが入っています）');
+  line.push('  ※ 帳票は1週=1ページで、週は途中で切り分けられません。');
+  line.push('    お求めの期間にかかる週を、まるごと入れてあります。');
   line.push('作成日時 : ' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyy/MM/dd HH:mm'));
   line.push('作成者   : ' + (actor || '—'));
   line.push('');
@@ -3380,12 +3869,19 @@ function bundleManifest_(items, from, to, actor) {
   line.push('----------------------------------------------------------------');
   items.forEach(function (x) {
     line.push('');
-    line.push(x.month + '　第' + x.version + '版');
+    line.push(x.label + '　第' + x.version + '版');
     line.push('  確定    : ' + x.at + '　' + (x.by || '—'));
     line.push('  ファイル: ' + x.name);
     line.push('  SHA-256 : ' + (x.hash || '（記録なし）'));
     if (x.note) line.push('  備考    : ' + x.note);
   });
+  line.push('');
+  if (missing && missing.length) {
+    line.push('');
+    line.push('----------------------------------------------------------------');
+    line.push('★ まだ確定していない週があります（この束には入っていません）');
+    missing.forEach(function (w) { line.push('  ' + weekLabel_(w)); });
+  }
   line.push('');
   line.push('----------------------------------------------------------------');
   line.push('確認のしかた（Windows の PowerShell）');
@@ -3399,34 +3895,37 @@ function bundleManifest_(items, from, to, actor) {
  * 期間ぶんの確定PDFを1つのZIPにまとめる。
  *
  * PDFを作り直さないので、待ち時間はファイルを読むぶんだけです。
- * 各月は、取り消されていない最新の版を入れます。
+ * 各週は、取り消されていない最新の版を入れます。
  *
- * @param {Object} p { from:'2026-04', to:'2026-06', actor:'…' }
+ * 期間に少しでもかかる週を入れます。週は途中で切り分けられないので、
+ * 「8月ぶん」と頼まれたら 7/25〜7/31 や 8/29〜9/4 の週も付いてきます。
+ * 目録にどの週が入っているかを書いてあります。
+ *
+ * @param {Object} p { from:'2026-08-01', to:'2026-08-31', actor:'…' }
  */
 function bundleFixes(p) {
   return guard_('bundleFixes', function () {
-    const from = String(p.from || '').slice(0, 7);
-    const to = String(p.to || '').slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) {
-      throw new Error('対象月が正しくありません');
-    }
-    if (from > to) throw new Error('開始の月が終わりの月より後になっています');
+    const from = fmt_(p.from), to = fmt_(p.to);
+    if (!from || !to) throw new Error('期間が正しくありません');
+    if (from > to) throw new Error('開始日が終了日より後になっています');
+
+    const weeks = weeksTouching_(from, to);
+    if (weeks.length > 60) throw new Error('一度にまとめられるのは60週までです。期間を分けてください');
 
     const all = fixList_();
     const picked = [];
-    const seen = {};
-    all.forEach(function (x) {
-      if (!x.alive || x.month < from || x.month > to) return;
-      if (seen[x.month]) return;      // fixList_ は版の新しい順なので、最初のものが最新
-      seen[x.month] = true;
-      picked.push(x);
+    const missing = [];
+    weeks.forEach(function (w) {
+      // fixList_ は版の新しい順なので、生きている最初のものが最新
+      const hit = all.filter(function (x) { return x.week === w && x.alive; })[0];
+      if (hit) picked.push(hit); else missing.push(w);
     });
-    if (!picked.length) throw new Error('この期間に確定済みの月がありません');
-    if (picked.length > 36) throw new Error('一度にまとめられるのは36か月までです');
 
-    picked.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+    if (!picked.length) {
+      throw new Error('この期間に確定済みの週がありません（' + weeks.length + '週ぶんが未確定）');
+    }
 
-    const blobs = [bundleManifest_(picked, from, to, p.actor)];
+    const blobs = [bundleManifest_(picked, from, to, p.actor, missing)];
     picked.forEach(function (x) {
       const blob = DriveApp.getFileById(x.fileId).getBlob();
       blobs.push(blob.setName(x.name));
@@ -3438,15 +3937,433 @@ function bundleFixes(p) {
     const file = outFolder_().createFile(zip);
 
     audit_('確定PDFをまとめて出力',
-      from + ' 〜 ' + to + '（' + picked.length + 'か月）', p.actor || '');
+      from + ' 〜 ' + to + '（' + picked.length + '週'
+      + (missing.length ? '／未確定 ' + missing.length + '週' : '') + '）', p.actor || '');
 
     return {
       name: file.getName(),
       url: file.getUrl(),
-      months: picked.length,
+      weeks: picked.length,
+      missing: missing.map(weekLabel_),
+      // 頼まれた期間にかかる週ぜんぶの範囲。抜けている週も、この中にあります
+      from: weeks[0],
+      to: weekEnd_(weeks[weeks.length - 1]),
       items: picked.map(function (x) {
-        return { month: x.month, version: x.version, name: x.name, hash: x.hash };
+        return { week: x.week, label: x.label, version: x.version,
+                 name: x.name, hash: x.hash };
       })
     };
   });
+}
+
+
+/* ############################################################
+   11. 夜間の自動確定
+   ############################################################
+   月の締めは最終日の営業終了時に行います。その日のうちに全日の承認まで
+   終わっていれば、確定は機械にやらせても人の判断は何も要りません。
+   そこで毎晩1度だけ見にいき、条件がそろっている月があれば確定します。
+
+   考えておくこと
+
+   ・6分の壁
+     GASは1回の実行が6分で打ち切られます。帳票づくりは runExportChunk が
+     自分から止まって「まだ続きがある」と返すので、1回の実行では1度だけ呼び、
+     終わっていなければ続きを別のトリガーに渡します。
+     2度呼ぶと6分を越えて途中で殺され、一時ファイルが残ります。
+
+   ・気づけないまま止まること
+     夜間処理でいちばん困るのは、動いていないのに動いているつもりでいることです。
+     ですから、確定できたときも、できなかったときも、メールで知らせます。
+     途中で止まったジョブも、一定時間を過ぎたら片づけて次に進めます。
+
+   ・作り直しはしない
+     すでに確定済みの週には触れません。訂正して版を積み増すのは、
+     「なぜ直すのか」を書ける人がやることだからです。
+
+   ・どこまで済んだかは、覚え書きを置かない
+     確定台帳そのものが「済んだ週」の記録です。別にカーソルを持つと、
+     版を取り消したときなどに台帳と食い違い、どちらが正しいか
+     分からなくなります。毎晩そこから数え直します。
+     承認が何週も遅れた週も、記録がある限り見つかります。
+
+   ・確定者は「夜間自動」
+     確定台帳の確定者欄にそう残ります。承認したのは人なので筋は通りますが、
+     監査で問われたときに説明できるようにしておいてください。
+
+   使い方
+     setupNightlyFreeze()  … 手で1回実行するとトリガーが付きます
+     stopNightlyFreeze()   … やめるとき
+     nightlyStatus()       … いまどうなっているか
+   ############################################################ */
+
+const NIGHTLY_FN = 'nightlyFreeze';
+const NIGHTLY_CONT_FN = 'nightlyFreezeContinue';
+/** その晩に焼く週の待ち行列。実行をまたいで持ち越します */
+const NIGHTLY_QUEUE = 'NIGHTLY_QUEUE';
+
+/**
+ * ★ 手で1回実行して、夜間の自動確定を始めます。
+ *    同じトリガーが二重に付かないよう、先に古いものを外します。
+ */
+function setupNightlyFreeze() {
+  stopNightlyFreeze();
+
+  ScriptApp.newTrigger(NIGHTLY_FN).timeBased()
+    .atHour(CFG.NIGHTLY.HOUR).everyDays(1).inTimezone(CFG.TZ).create();
+
+  const to = notifyTo_();
+  console.log('夜間の自動確定を始めました。');
+  console.log('  毎日 ' + CFG.NIGHTLY.HOUR + ':00〜' + (CFG.NIGHTLY.HOUR + 1) + ':00 に見にいきます');
+  console.log('  （GASの時間主導トリガーは、時刻をこれ以上細かく指定できません）');
+  console.log('  一晩に確定する上限: ' + CFG.NIGHTLY.PER_NIGHT + ' 週');
+  console.log('  記録があってまだ確定していない週は、何週前でも拾います');
+  console.log('  知らせ先: ' + (to || '（取得できませんでした。CFG.NIGHTLY.NOTIFY に書いてください）'));
+  if (!CFG.NIGHTLY.ENABLED) {
+    console.log('  ★ CFG.NIGHTLY.ENABLED が false です。トリガーは動きますが何もしません');
+  }
+  audit_('夜間の自動確定を開始', CFG.NIGHTLY.HOUR + '時台／一晩に'
+    + CFG.NIGHTLY.PER_NIGHT + '週まで', '');
+  return nightlyStatus();
+}
+
+/** ★ 手で実行して、夜間の自動確定をやめます */
+function stopNightlyFreeze() {
+  const n = dropTriggers_([NIGHTLY_FN, NIGHTLY_CONT_FN]);
+  console.log(n ? 'トリガーを ' + n + ' 件外しました' : '外すトリガーはありませんでした');
+  if (n) audit_('夜間の自動確定を停止', n + ' 件', '');
+  return n;
+}
+
+/** 指定した関数のトリガーを外す */
+function dropTriggers_(names) {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (names.indexOf(t.getHandlerFunction()) >= 0) { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return n;
+}
+
+/** 知らせ先。設定が空なら、トリガーを作った人のアドレス */
+function notifyTo_() {
+  if (CFG.NIGHTLY.NOTIFY) return CFG.NIGHTLY.NOTIFY;
+  try { return Session.getEffectiveUser().getEmail() || ''; } catch (e) { return ''; }
+}
+
+/** 知らせる。送れなくても処理は続けます(通知の失敗で確定を止めない) */
+function notify_(subject, lines) {
+  const to = notifyTo_();
+  const body = lines.join('\n');
+  console.log('［通知］' + subject + '\n' + body);
+  if (!to) { console.warn('知らせ先が分からないので、メールは送っていません'); return false; }
+  try {
+    MailApp.sendEmail(to, '[' + CFG.STORE_NAME + '] ' + subject, body);
+    return true;
+  } catch (e) {
+    console.error('メールを送れませんでした: ' + e);
+    return false;
+  }
+}
+
+/**
+ * いま確定できる週と、できない週を仕分ける。
+ * 確定済みの週は、どちらにも入りません(作り直しは人がやることなので)。
+ */
+function nightlyTargets_() {
+  const open = openWeeks_();
+  return {
+    ready:   open.filter(function (c) { return c.ok; }),      // すでに古い順
+    blocked: open.filter(function (c) { return !c.ok; })
+  };
+}
+
+/**
+ * 途中で止まったままのジョブを片づける。
+ *
+ * これが無いと、一度こけたきり「別の出力を実行中です」で
+ * 毎晩見送られ続け、誰も気づきません。
+ */
+function sweepStuckJob_() {
+  const job = currentJob_();
+  if (!job || job.state !== 'running') return false;
+
+  const t0 = job.startedAt ? new Date(job.startedAt).getTime() : 0;
+  const hours = t0 ? (Date.now() - t0) / 3600000 : 999;
+  if (hours < CFG.NIGHTLY.STUCK_HOURS) return false;
+
+  trashTemp_(job);
+  job.state = 'error';
+  job.message = '途中で止まったまま ' + Math.floor(hours) + ' 時間が過ぎたため片づけました';
+  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+  console.warn(job.message);
+  audit_('止まった出力を片づけた', (job.title || '') + '：' + job.message, '夜間自動');
+
+  // 黙って片づけると、同じところで毎回止まっていても誰も気づきません
+  notify_('途中で止まっていた出力を片づけました', [
+    (job.title || '（名前なし）') + ' が ' + Math.floor(hours) + ' 時間 動いていませんでした。',
+    '  進み具合: ' + (job.done || 0) + ' / ' + ((job.weeks && job.weeks.length) || '?') + ' 週',
+    (job.weekMs ? '  1週あたり: ' + (job.weekMs / 1000).toFixed(1) + ' 秒' : ''),
+    '',
+    'GASの6分の上限で打ち切られた可能性があります。',
+    '同じことが続くようなら、benchmarkExport で1週あたりの時間を測ってください。',
+    '1週が数分かかるなら、この仕組みでは確定しきれません。'
+  ].filter(function (x) { return x; }));
+  return true;
+}
+
+/** 夜間に始めたジョブか(人が画面から始めたものには手を出さないため) */
+function isNightlyJob_(job) { return !!(job && job.auto); }
+
+/**
+ * 毎晩のトリガーが呼ぶ入口。
+ *
+ * 1. 止まったままのジョブを片づける
+ * 2. ほかの出力が走っていれば、その晩は見送る
+ * 3. 確定できる月があれば、いちばん古いものを1つ確定する
+ * 4. 月が終わっているのに確定できない月があれば、その理由を知らせる
+ */
+function nightlyFreeze() {
+  try {
+    if (!CFG.NIGHTLY.ENABLED) { console.log('CFG.NIGHTLY.ENABLED が false のため、何もしません'); return; }
+
+    sweepStuckJob_();
+
+    const cur = currentJob_();
+    if (cur && cur.state === 'running') {
+      console.log('ほかの出力が実行中のため、今夜は見送ります（' + (cur.title || '') + '）');
+      return;
+    }
+
+    if (!ss_().getSheetByName(T_().SHEET)) {
+      notify_('夜間の自動確定を実行できません', [
+        '帳票テンプレートのシートがありません。',
+        'スクリプトエディタで buildTemplate を実行してください。'
+      ]);
+      return;
+    }
+
+    const t = nightlyTargets_();
+
+    // 週が終わっているのに確定できないものは、放っておくと溜まるので知らせる
+    remindOverdue_(t.blocked);
+
+    if (!t.ready.length) { console.log('今夜 確定できる週はありませんでした'); return; }
+
+    // 溜まっていても、一晩に焼くのは上限まで。残りは翌晩に回します
+    const queue = t.ready.slice(0, Math.max(1, CFG.NIGHTLY.PER_NIGHT))
+      .map(function (c) { return c.week; });
+    if (t.ready.length > queue.length) {
+      console.log('確定できる週が ' + t.ready.length + ' 週あります。今夜は '
+        + queue.length + ' 週ぶんにします（残りは翌晩）');
+    }
+    PROP.setProperty(NIGHTLY_QUEUE, JSON.stringify(queue));
+
+    nightlyNext_();
+  } catch (err) {
+    console.error('nightlyFreeze failed: ' + (err && err.stack ? err.stack : err));
+    notify_('夜間の自動確定でエラーが起きました', [
+      String(err && err.message ? err.message : err),
+      '',
+      '記録は失われていません。画面から［この月を確定］を押せば手で確定できます。'
+    ]);
+  }
+}
+
+/**
+ * 続きのトリガーが呼ぶ入口。
+ *
+ * 使い捨てなので、まず自分を外します。外し忘れると、
+ * 1スクリプト20個までのトリガー枠をじわじわ食い潰します。
+ */
+function nightlyFreezeContinue() {
+  dropTriggers_([NIGHTLY_CONT_FN]);
+  try {
+    const job = currentJob_();
+    if (isNightlyJob_(job) && job.state === 'running') {
+      nightlyStep_();               // 焼きかけの週を進める
+      return;
+    }
+    nightlyNext_();                 // 次の週へ
+  } catch (err) {
+    console.error('nightlyFreezeContinue failed: ' + (err && err.stack ? err.stack : err));
+    notify_('夜間の自動確定でエラーが起きました（続きの処理）', [
+      String(err && err.message ? err.message : err)
+    ]);
+  }
+}
+
+/**
+ * 帳票づくりを1回ぶんだけ進める。
+ *
+ * runExportChunk はこの中で1度しか呼びません。2度呼ぶと、
+ * 1回目が上限いっぱいまで使ったときに6分を越えて途中で殺されます。
+ * 終わっていなければ、続きは1分後のトリガーに渡します。
+ */
+function nightlyStep_() {
+  const job = runExportChunk(CFG.NIGHTLY.BUDGET_MS);
+
+  if (job && job.state === 'running') {
+    ScriptApp.newTrigger(NIGHTLY_CONT_FN).timeBased().after(60 * 1000).create();
+    console.log('  ' + job.done + ' / ' + job.weeks.length + ' 週まで。続きは1分後に');
+    return job;
+  }
+
+  if (job && job.state === 'done') {
+    console.log(weekLabel_(job.week) + ' 第' + job.version + '版を確定しました');
+    nightlyDone_(job);
+    nightlyNext_();                 // 待っている週があれば続けて焼く
+    return job;
+  }
+
+  const why = (job && job.message) || '理由不明';
+  console.error('確定できませんでした: ' + why);
+  PROP.deleteProperty(NIGHTLY_QUEUE);
+  notify_('夜間の自動確定に失敗しました', [
+    why,
+    '',
+    '記録は失われていません。記録簿の画面から、その週の［確定］を押せば手で確定できます。'
+  ]);
+  return job;
+}
+
+/** 焼き終えた週を控えておく。その晩ぶんをまとめて1通で知らせるため */
+function nightlyDone_(job) {
+  const key = 'NIGHTLY_DONE';
+  const done = JSON.parse(PROP.getProperty(key) || '[]');
+  done.push({ week: job.week, version: job.version, url: job.pdfUrl,
+              weekMs: job.weekMs || 0 });
+  PROP.setProperty(key, JSON.stringify(done));
+}
+
+/**
+ * 待ち行列の次の週を焼く。空になったら、その晩ぶんをまとめて知らせます。
+ *
+ * 1週ずつ別の実行に分けます。1週は30秒ほどなので続けても6分に届きませんが、
+ * 遅い環境で何週も溜まったときに、まとめて焼くと上限に当たるためです。
+ */
+function nightlyNext_() {
+  const queue = JSON.parse(PROP.getProperty(NIGHTLY_QUEUE) || '[]');
+
+  if (!queue.length) {
+    const done = JSON.parse(PROP.getProperty('NIGHTLY_DONE') || '[]');
+    PROP.deleteProperty('NIGHTLY_DONE');
+    if (done.length) {
+      const lines = [done.length + ' 週ぶんを、夜間の自動処理で確定しました。', ''];
+      done.forEach(function (d) {
+        lines.push('■ ' + weekLabel_(d.week) + '　第' + d.version + '版');
+        lines.push('   ' + d.url);
+      });
+      lines.push('');
+      lines.push('置き場所: 業務日報_出力／' + done[0].week.slice(0, 4));
+      lines.push('');
+      lines.push('記録を直したいときは、記録簿で承認を解除して直し、');
+      lines.push('その週をもう一度確定してください。前の版は消えません。');
+      notify_(done.length === 1
+        ? weekLabel_(done[0].week) + ' を確定しました'
+        : done.length + ' 週を確定しました', lines);
+    }
+    return null;
+  }
+
+  const w = queue.shift();
+  PROP.setProperty(NIGHTLY_QUEUE, JSON.stringify(queue));
+
+  const chk = freezeCheck_(w);
+  if (chk.frozen || !chk.ok) {          // 待っているあいだに変わっていたら飛ばす
+    console.log(weekLabel_(w) + ' は対象から外れました');
+    return nightlyNext_();
+  }
+
+  console.log(weekLabel_(w) + ' の確定を始めます（第' + chk.nextVersion + '版）');
+  const job = startFreeze({ week: w, actor: '夜間自動' });
+  job.auto = true;
+  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+  audit_('夜間の自動確定を開始',
+    weekLabel_(w) + '（第' + chk.nextVersion + '版）', '夜間自動');
+
+  return nightlyStep_();
+}
+
+/**
+ * 月が終わっているのに確定できていない月を知らせる。
+ *
+ * 当月はまだ途中なので知らせません(毎晩届いても意味がないため)。
+ * 同じ月について1日1通までにします。
+ */
+function remindOverdue_(blocked) {
+  const today = today_();
+  const late = blocked.filter(function (c) { return c.stat.end < today; });
+  if (!late.length) return 0;
+
+  const key = 'NIGHTLY_REMINDED';
+  const mark = today + '|' + late.map(function (c) { return c.week; }).join(',');
+  if (PROP.getProperty(key) === mark) return 0;
+  PROP.setProperty(key, mark);
+
+  const lines = ['週が終わっているのに、まだ確定できていない週があります。', ''];
+  late.forEach(function (c) {
+    lines.push('■ ' + c.label);
+    c.reasons.forEach(function (r) { lines.push('   ・' + r); });
+    lines.push('   記録 ' + c.stat.filled + ' / ' + c.stat.days + ' 日'
+      + '　承認 ' + c.stat.approved + ' 日');
+    lines.push('');
+  });
+  lines.push('記録簿の画面で足りない日を埋めて承認すると、');
+  lines.push('その日の夜に自動で確定します。');
+
+  notify_('確定できていない週があります（' + late.length + '週）', lines);
+  return late.length;
+}
+
+/**
+ * ★ 手で実行して、夜間の自動確定がどうなっているかを見ます。
+ */
+function nightlyStatus() {
+  const out = [];
+  const say = function (l) { out.push(l); console.log(l); };
+
+  const trig = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === NIGHTLY_FN;
+  });
+  const cont = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === NIGHTLY_CONT_FN;
+  });
+
+  say('■ 夜間の自動確定');
+  say('   トリガー : ' + (trig.length ? 'あります（' + CFG.NIGHTLY.HOUR + '時台）'
+    : 'ありません。setupNightlyFreeze を実行してください'));
+  if (cont.length) say('   続きの予約: ' + cont.length + ' 件（処理の途中です）');
+  say('   動作     : ' + (CFG.NIGHTLY.ENABLED ? '有効' : '★ CFG.NIGHTLY.ENABLED が false'));
+  say('   知らせ先 : ' + (notifyTo_() || '★ 分かりません。CFG.NIGHTLY.NOTIFY に書いてください'));
+
+  const job = currentJob_();
+  say('');
+  say('■ いまの出力');
+  if (!job) say('   ありません');
+  else say('   ' + (job.title || '') + '：' + job.state
+    + (job.state === 'running' ? '（' + job.done + ' / ' + job.weeks.length + ' 週）' : '')
+    + (isNightlyJob_(job) ? '／夜間自動' : '／画面から'));
+
+  const t = nightlyTargets_();
+  say('');
+  say('■ まだ確定していない週');
+  if (!t.ready.length && !t.blocked.length) {
+    say('   ありません。記録のある週はすべて確定済みです');
+  } else {
+    say('   ' + (t.ready.length + t.blocked.length) + ' 週'
+      + '（確定できる ' + t.ready.length + ' / 待ち ' + t.blocked.length + '）');
+    say('');
+    t.ready.forEach(function (c, i) {
+      say('   ' + c.label + '　確定できます（第' + c.nextVersion + '版）'
+        + (i >= CFG.NIGHTLY.PER_NIGHT ? '　← 翌晩以降' : '　← 今夜'));
+    });
+    t.blocked.forEach(function (c) {
+      say('   ' + c.label + '　' + c.reasons.join(' / '));
+    });
+  }
+  say('');
+  say('※ 「どこまで確定したか」は確定台帳から毎回数え直しています。');
+  say('   記録があってまだ確定していない週は、何週前のものでも見つかります。');
+
+  return out.join('\n');
 }
