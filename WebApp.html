@@ -834,7 +834,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
 .lg-week > h3 .pg.right{margin-left:auto}
 
-/* 帳票は 1071px と幅が決まっている。枠を画面いっぱいに広げると
+/* 帳票は幅が決まっている(いまは1031px)。枠を画面いっぱいに広げると
    右側に大きな余白ができるので、中身に合わせて中央に置く */
 .lg-week{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
 
@@ -3939,7 +3939,7 @@ var MOCK = (function(){
   // 実物のテンプレートを模した寸法(本番はシートから読み取ります)
   var LAYOUT = {
     cols: 12, headRows: 2, rowsPerDay: 2,
-    widths: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+    widths: [104, 50, 50, 50, 50, 327, 58, 46, 54, 46, 98, 98],
     heights: [42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42],
     row1: ['日付\n営業時間','処方箋枚数','','疑義照会件数','','管理に関する事項',
            '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],

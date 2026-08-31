@@ -176,8 +176,11 @@ const CFG = {
     /** 未記入のときに温湿度セルへ置いておく下地 */
     PLACEHOLDER: { TEMP: '℃　/', HUMID: '%' },
 
-    /** 列幅(A〜L) */
-    WIDTH: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+    /** 列幅(A〜L)。合計 1031px。
+     *  A4横・余白0.4インチの印刷可能幅(1045.7px)に原寸で収まる値です。
+     *  実際のシートを測って決めました(dumpTemplateLayout の出力)。
+     *  ここを変えたら checkPrintFit で収まるかを確かめてください。 */
+    WIDTH: [104, 50, 50, 50, 50, 327, 58, 46, 54, 46, 98, 98],
 
     /** 行の高さ */
     ROW_H: { HEAD1: 42, HEAD2: 42, UPPER: 42, LOWER: 42 },
@@ -189,10 +192,17 @@ const CFG = {
 
   /** PDFにするときの紙の設定。
    *
-   *  MARGIN_IN を広げると、帳票を縮める割合が大きくなります。
-   *  逆に狭めて帳票が原寸で収まるようになると、縮小せずに出力するので
-   *  外枠と紙の端のあいだに余裕ができ、罫線が欠けにくくなります。
-   *  （現在の帳票は 1071px ＝ 283.4mm。余白 0.2 インチなら原寸で収まります）
+   *  帳票が原寸で収まるなら、縮小せずに出力します。縮小すると帳票の幅が
+   *  印刷できる幅とぴったり同じになり、外枠が切り取り線の真上に来て
+   *  四隅が欠けます。収まっていればその心配がありません。
+   *
+   *  いまの帳票は 1031px ＝ 272.8mm。この余白(0.4インチ)なら
+   *  印刷できる幅は 1045.7px ＝ 276.7mm なので、原寸で収まっています。
+   *  MARGIN_IN を広げるか、テンプレートの列幅を広げると収まらなくなります。
+   *
+   *  なお MARGIN_IN はPDFの余白であって、プリンタが刷れる範囲ではありません。
+   *  たいていのプリンタは紙の端から4〜5mmを刷れないので、ここを詰めすぎると
+   *  PDFとしては収まっていてもプリンタ側で切れます。
    *
    *  EDGE_GAP_PX … 原寸で出すかどうかの判定に使う余裕。罫線の太さぶん。 */
   PDF: {
@@ -1841,7 +1851,15 @@ function dumpTemplateLayout() {
   out.push('');
   out.push('■ 合計 : 幅 ' + widths.reduce(function (a, b) { return a + b; }, 0)
     + ' px / 高さ ' + heights.reduce(function (a, b) { return a + b; }, 0) + ' px');
-  out.push('  ※ A4横の印刷可能幅はおよそ 1030px 相当（余白0.4インチのとき）');
+  const fit = printFit_();
+  if (fit) {
+    out.push('  ※ ' + CFG.PDF.PAGE + (CFG.PDF.LANDSCAPE ? '横' : '縦')
+      + '・余白' + CFG.PDF.MARGIN_IN + 'インチ で印刷できるのは 幅 '
+      + Math.round(fit.availW) + 'px / 高さ ' + Math.round(fit.availH) + 'px');
+    out.push('  ※ ' + (fit.fits ? '原寸で収まっています'
+      : '★ はみ出しています。幅を ' + Math.ceil(fit.width + CFG.PDF.EDGE_GAP_PX - fit.availW)
+        + 'px 詰めてください'));
+  }
 
   out.push('');
   out.push('■ CFG.TEMPLATE に貼れる形');
@@ -2511,14 +2529,34 @@ function checkPrintFit() {
   console.log('■ 結果');
   if (f.fits) {
     console.log('   原寸で収まります。縮小せずに出力するので、外枠は欠けません。');
+    console.log('   余り 幅 ' + Math.floor(f.availW - f.width - cfg.EDGE_GAP_PX) + 'px'
+      + ' / 高さ ' + Math.floor(f.availH - f.height - cfg.EDGE_GAP_PX) + 'px');
   } else {
+    const cut = Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW);
+    // これ以下の余白なら収まる、という値(0.01インチ刻みで下から探す)
+    let ok = 0;
+    for (let m = 0.05; m <= cfg.MARGIN_IN; m += 0.01) {
+      const aw = ((cfg.LANDSCAPE ? 297 : 210) / 25.4 - m * 2) * 96;
+      if (f.width + cfg.EDGE_GAP_PX <= aw) ok = Math.round(m * 100) / 100;
+    }
+
     console.log('   はみ出すので ' + Math.round(f.scale * 1000) / 10 + '% に縮小します。');
     console.log('   縮小すると帳票の幅が印刷できる幅と一致し、外枠が切り取り線の');
-    console.log('   真上に来ます（四隅が欠けて見える原因）。外枠は太くしてあるので');
-    console.log('   欠けにくくしていますが、気になるときは次のどちらかを。');
-    console.log('     ・CFG.PDF.MARGIN_IN を 0.2 に下げる（原寸で収まるようになります）');
-    console.log('     ・帳票テンプレートの列幅を合計 '
-      + Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW) + 'px ぶん詰める');
+    console.log('   真上に来ます（四隅が欠けて見える原因）。');
+    console.log('');
+    console.log('   直し方（上のほうが安全です）');
+    console.log('     1. 帳票テンプレートの列幅を合計 ' + cut + 'px ぶん詰める');
+    console.log('        いちばん広い列から削り、dumpTemplateLayout の出力を');
+    console.log('        CFG.TEMPLATE.WIDTH に貼り戻してください');
+    if (ok) {
+      console.log('     2. CFG.PDF.MARGIN_IN を ' + ok + ' 以下に下げる（'
+        + (ok * 25.4).toFixed(1) + 'mm）');
+      console.log('        ただし MARGIN_IN はPDFの余白であって、プリンタが刷れる');
+      console.log('        範囲ではありません。多くのプリンタは紙の端から4〜5mmを');
+      console.log('        刷れないので、詰めすぎるとプリンタ側で切れます');
+    } else {
+      console.log('     2. 余白を下げても収まりません。列幅を詰めてください');
+    }
   }
   return f;
 }
