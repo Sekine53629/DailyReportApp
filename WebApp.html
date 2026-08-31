@@ -599,6 +599,7 @@ button,input,select{font:inherit;color:inherit}
 .pvwrap{
   background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
   padding:10px;overflow-x:auto;margin-bottom:6px;
+  width:fit-content;max-width:100%;margin-left:auto;margin-right:auto;
 }
 /* シートの実寸で描く。画面に収まらないときは縮めて全体を見せる
    (拡大はしない。実寸より大きいと、刷ったときの印象とずれるため) */
@@ -665,7 +666,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
    ============================================================ */
 .lgview[hidden]{display:none}
-.lgview{max-width:1440px;margin:0 auto;padding:0 14px 60px}
+.lgview{max-width:1200px;margin:0 auto;padding:0 14px 60px}
 
 .lg-bar{
   position:sticky;top:0;z-index:25;
@@ -722,6 +723,10 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 }
 .lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
 .lg-week > h3 .pg.right{margin-left:auto}
+
+/* 帳票は 1071px と幅が決まっている。枠を画面いっぱいに広げると
+   右側に大きな余白ができるので、中身に合わせて中央に置く */
+.lg-week{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
 
 /* 帳票そのもの。画面の1枚 = 印刷の1ページ */
 .lg-sheet{
