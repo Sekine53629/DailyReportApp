@@ -277,10 +277,9 @@ function setup() {
   ensureSheet_(SH.FIX,   COLS.FIX);
   ensureSheet_(SH.XFER,  COLS.XFER);
 
-  // 日付と就任日は文字列で持つ(タイムゾーンのずれで1日前後するのを避けるため)
-  formatTextColumn_(SH.DAILY, '日付');
-  formatTextColumn_(SH.TERM,  '就任日');
-  formatTextColumn_(SH.XFER,  '日付');
+  // 日付のたぐいは文字列で持つ。書式を付けずに '2026-08' や '2027-03' を書くと、
+  // スプレッドシートが日付として取り込んでしまい、読み戻したとき形が変わります
+  textColumns_();
 
   sealFolder_();   // 印影フォルダを作っておく
 
@@ -403,6 +402,67 @@ function checkSheets() {
   console.log('確認おわり');
 }
 
+/**
+ * 文字列で持つ列。書式を付けずに書くと、スプレッドシートが
+ * 日付や数値として取り込んでしまうものを並べています。
+ *
+ *   日付・就任月 … '2026-08-01' が Date になり、タイムゾーンで1日ずれる
+ *   対象月       … '2026-08' が Date になり、月の突き合わせが全部外れる
+ *   使用期限     … '2027-03' が Date になる
+ *   Lot          … '007' の頭の0が落ちる。'1-2' が日付になる
+ */
+const TEXT_COLS = [
+  [SH.DAILY, '日付'],
+  [SH.TERM,  '就任日'],
+  [SH.XFER,  '日付'],
+  [SH.XFER,  'Lot'],
+  [SH.XFER,  '使用期限'],
+  [SH.FIX,   '対象月']
+];
+
+/** 上の一覧をまとめて文字列書式にする。直したものの名前を返します */
+function textColumns_() {
+  const done = [];
+  TEXT_COLS.forEach(function (x) {
+    if (!ss_().getSheetByName(x[0])) return;
+    formatTextColumn_(x[0], x[1]);
+    done.push(x[0] + '.' + x[1]);
+  });
+  return done;
+}
+
+/**
+ * 確定台帳の「対象月」が日付で入っている行を、'2026-08' の形に戻す。
+ *
+ * 連鎖(ハッシュの鎖)は書いたときの文字列から作ってあるので、
+ * ここで形を戻すと照合がまた通るようになります。連鎖そのものは触りません
+ * (作り直すと、本当に書き換えられたときに気づけなくなるため)。
+ */
+function repairFixMonths_() {
+  const sh = ss_().getSheetByName(SH.FIX);
+  if (!sh) return 0;
+
+  const head = headerOf_(sh);
+  const col = head.indexOf('対象月') + 1;
+  if (!col) return 0;
+
+  const last = sh.getLastRow();
+  if (last < 2) return 0;
+
+  const range = sh.getRange(2, col, last - 1, 1);
+  range.setNumberFormat('@');            // 書き戻す前に文字列にしておく
+
+  const cur = range.getValues();
+  let n = 0;
+  const next = cur.map(function (row) {
+    const want = monthOf_(row[0]);
+    if (want && want !== row[0]) n++;
+    return [want || row[0]];
+  });
+  if (n) range.setValues(next);
+  return n;
+}
+
 function formatTextColumn_(sheetName, colName) {
   const sh = ss_().getSheetByName(sheetName);
   const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
@@ -484,6 +544,23 @@ function fmt_(v) {
   if (m) return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
   const d = new Date(s);
   return isNaN(d.getTime()) ? '' : Utilities.formatDate(d, CFG.TZ, 'yyyy-MM-dd');
+}
+
+/**
+ * '2026-08' に揃える。
+ *
+ * 「対象月」の列に文字列書式が無いと、スプレッドシートが '2026-08' を
+ * 日付として取り込んでしまい、読み戻すと Date になっています。
+ * どちらで入っていても同じ形で返すので、古いブックでもそのまま動きます。
+ */
+function monthOf_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, CFG.TZ, 'yyyy-MM');
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  const m = s.match(/^(\d{4})[-\/](\d{1,2})/);
+  if (m) return m[1] + '-' + ('0' + m[2]).slice(-2);
+  const d = new Date(s);                     // 'Wed Aug 01 2026 …' の形
+  return isNaN(d.getTime()) ? s : Utilities.formatDate(d, CFG.TZ, 'yyyy-MM');
 }
 
 function addDays_(iso, n) {
@@ -1499,10 +1576,14 @@ function updateDatabase() {
 
   say('');
   say('■ 日付の書式');
-  formatTextColumn_(SH.DAILY, '日付');
-  formatTextColumn_(SH.TERM,  '就任日');
-  formatTextColumn_(SH.XFER,  '日付');
-  say('   日報DB.日付 / 管理薬剤師任期.就任日 / 譲渡記録.日付 を文字列にしました');
+  textColumns_().forEach(function (c) { say('   ' + c + ' を文字列にしました'); });
+
+  say('');
+  say('■ 確定台帳の対象月');
+  const fixed = repairFixMonths_();
+  say(fixed
+    ? '   日付になっていた ' + fixed + ' 行を 2026-08 の形に戻しました'
+    : '   直すものはありませんでした');
 
   say('');
   say('■ 印影フォルダ');
@@ -3007,7 +3088,7 @@ function fixList_() {
   return t.rows.map(function (r) {
     return {
       id: String(r['ID']),
-      month: String(r['対象月']),
+      month: monthOf_(r['対象月']),
       version: Number(r['版']) || 0,
       at: (r['確定日時'] instanceof Date)
         ? Utilities.formatDate(r['確定日時'], CFG.TZ, 'yyyy/MM/dd HH:mm')
@@ -3157,7 +3238,7 @@ function voidFix(p) {
       '備考': String(row['備考'] || '') + (row['備考'] ? ' / ' : '') + '取消：' + why
     });
     audit_('確定を取り消し',
-      String(row['対象月']) + '（第' + row['版'] + '版）：' + why, p.actor || '');
+      monthOf_(row['対象月']) + '（第' + row['版'] + '版）：' + why, p.actor || '');
     return fixPayload_();
   });
 }
@@ -3279,7 +3360,7 @@ function verifyFixes_() {
   let bad = 0;
 
   rows.forEach(function (r) {
-    const month = String(r['対象月']);
+    const month = monthOf_(r['対象月']);
     const version = Number(r['版']) || 0;
     const hash = String(r['ハッシュ'] || '');
     const chain = String(r['連鎖'] || '');
@@ -3344,7 +3425,7 @@ function backfillFixHashes() {
   let prev = '';
   t.rows.forEach(function (r) {
     let hash = String(r['ハッシュ'] || '');
-    const month = String(r['対象月']);
+    const month = monthOf_(r['対象月']);
     const version = Number(r['版']) || 0;
 
     if (!hash) {
