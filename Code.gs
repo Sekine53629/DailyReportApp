@@ -29,6 +29,9 @@
  *    checkPrintFit()         帳票が紙に収まるかを確かめる
  *    benchmarkExport()       出力のどこに時間がかかっているかを測る
  *    freezeLastMonth()       前月を確定する
+ *    setupNightlyFreeze()    夜間の自動確定を始める（トリガーを付ける）
+ *    stopNightlyFreeze()     夜間の自動確定をやめる（トリガーを外す）
+ *    nightlyStatus()         夜間の自動確定の状態を見る
  *    verifyFixes()           確定PDFが確定時のままかを確かめる
  *    sweepStaleLocks()       期限切れの編集ロックを掃除する
  *
@@ -45,6 +48,7 @@
  *     8. 記録簿の入口
  *     9. 月次の確定(PDFに焼いて残す)
  *    10. 証跡(ハッシュ)と、まとめて渡すZIP
+ *    11. 夜間の自動確定
  * ============================================================
  */
 
@@ -210,6 +214,29 @@ const CFG = {
     LANDSCAPE: true,
     MARGIN_IN: 0.4,
     EDGE_GAP_PX: 6
+  },
+
+  /** 夜間の自動確定。
+   *
+   *  ENABLED     … false にすると、トリガーが動いても何もしません。
+   *                トリガーそのものは setupNightlyFreeze / stopNightlyFreeze で付け外しします。
+   *  HOUR        … 何時台に見にいくか。営業終了(20:00)より後にしてください。
+   *                GASの時間主導トリガーは「その時台のどこか」でしか動きません。
+   *  LOOK_BACK   … 何か月ぶんさかのぼって見るか。2なら当月と先月。
+   *                承認が翌日以降にずれ込んでも拾えるようにするためです。
+   *  BUDGET_MS   … 1回の実行で帳票づくりに使ってよい時間。
+   *                GASの上限は6分なので、点検と後始末のぶんを残します。
+   *  STUCK_HOURS … 途中で止まったジョブを片づけるまでの時間。
+   *                これが無いと、一度こけたきり毎晩見送られ続けます。
+   *  NOTIFY      … 知らせ先。空ならトリガーを作った人のアドレスに送ります。
+   */
+  NIGHTLY: {
+    ENABLED: true,
+    HOUR: 23,
+    LOOK_BACK: 2,
+    BUDGET_MS: 3.5 * 60 * 1000,
+    STUCK_HOURS: 6,
+    NOTIFY: ''
   },
 
   /** 印影PNGを入れるフォルダ名。スプレッドシートと同じ場所に自動作成します。
@@ -2413,11 +2440,17 @@ function startExport_(p) {
 }
 
 /** 続きを処理する。時間が来たら止まるので、完了まで繰り返し呼びます */
-function runExportChunk() {
+/**
+ * @param {number} [budgetMs] この呼び出しで使ってよい時間。
+ *        画面から呼ぶときは渡しません(既定の 4.5 分)。
+ *        夜間の自動確定は、点検と後始末のぶんを残すため短くして渡します。
+ */
+function runExportChunk(budgetMs) {
   return guard_('runExportChunk', function () {
     const job = currentJob_();
     if (!job || job.state !== 'running') return job;
 
+    const budget = Number(budgetMs) > 0 ? Number(budgetMs) : PRINT.TIME_BUDGET_MS;
     const t0 = Date.now();
     const temp = SpreadsheetApp.openById(job.tempId);
     const idx = dailyIndex_();
@@ -2438,7 +2471,7 @@ function runExportChunk() {
     }
 
     try {
-      while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
+      while (job.done < job.weeks.length && Date.now() - t0 < budget) {
         const w = job.weeks[job.done];
         const rows = weekRows_(w, idx, terms, xi);
         const b = sealBase_(temp, tpl, rows, seals, geo, base);
@@ -3583,4 +3616,354 @@ function bundleFixes(p) {
       })
     };
   });
+}
+
+
+/* ############################################################
+   11. 夜間の自動確定
+   ############################################################
+   月の締めは最終日の営業終了時に行います。その日のうちに全日の承認まで
+   終わっていれば、確定は機械にやらせても人の判断は何も要りません。
+   そこで毎晩1度だけ見にいき、条件がそろっている月があれば確定します。
+
+   考えておくこと
+
+   ・6分の壁
+     GASは1回の実行が6分で打ち切られます。帳票づくりは runExportChunk が
+     自分から止まって「まだ続きがある」と返すので、1回の実行では1度だけ呼び、
+     終わっていなければ続きを別のトリガーに渡します。
+     2度呼ぶと6分を越えて途中で殺され、一時ファイルが残ります。
+
+   ・気づけないまま止まること
+     夜間処理でいちばん困るのは、動いていないのに動いているつもりでいることです。
+     ですから、確定できたときも、できなかったときも、メールで知らせます。
+     途中で止まったジョブも、一定時間を過ぎたら片づけて次に進めます。
+
+   ・作り直しはしない
+     すでに確定済みの月には触れません。訂正して版を積み増すのは、
+     「なぜ直すのか」を書ける人がやることだからです。
+
+   ・確定者は「夜間自動」
+     確定台帳の確定者欄にそう残ります。承認したのは人なので筋は通りますが、
+     監査で問われたときに説明できるようにしておいてください。
+
+   使い方
+     setupNightlyFreeze()  … 手で1回実行するとトリガーが付きます
+     stopNightlyFreeze()   … やめるとき
+     nightlyStatus()       … いまどうなっているか
+   ############################################################ */
+
+const NIGHTLY_FN = 'nightlyFreeze';
+const NIGHTLY_CONT_FN = 'nightlyFreezeContinue';
+
+/**
+ * ★ 手で1回実行して、夜間の自動確定を始めます。
+ *    同じトリガーが二重に付かないよう、先に古いものを外します。
+ */
+function setupNightlyFreeze() {
+  stopNightlyFreeze();
+
+  ScriptApp.newTrigger(NIGHTLY_FN).timeBased()
+    .atHour(CFG.NIGHTLY.HOUR).everyDays(1).inTimezone(CFG.TZ).create();
+
+  const to = notifyTo_();
+  console.log('夜間の自動確定を始めました。');
+  console.log('  毎日 ' + CFG.NIGHTLY.HOUR + ':00〜' + (CFG.NIGHTLY.HOUR + 1) + ':00 に見にいきます');
+  console.log('  （GASの時間主導トリガーは、時刻をこれ以上細かく指定できません）');
+  console.log('  さかのぼる範囲: ' + CFG.NIGHTLY.LOOK_BACK + ' か月');
+  console.log('  知らせ先: ' + (to || '（取得できませんでした。CFG.NIGHTLY.NOTIFY に書いてください）'));
+  if (!CFG.NIGHTLY.ENABLED) {
+    console.log('  ★ CFG.NIGHTLY.ENABLED が false です。トリガーは動きますが何もしません');
+  }
+  audit_('夜間の自動確定を開始', CFG.NIGHTLY.HOUR + '時台／' + CFG.NIGHTLY.LOOK_BACK + 'か月', '');
+  return nightlyStatus();
+}
+
+/** ★ 手で実行して、夜間の自動確定をやめます */
+function stopNightlyFreeze() {
+  const n = dropTriggers_([NIGHTLY_FN, NIGHTLY_CONT_FN]);
+  console.log(n ? 'トリガーを ' + n + ' 件外しました' : '外すトリガーはありませんでした');
+  if (n) audit_('夜間の自動確定を停止', n + ' 件', '');
+  return n;
+}
+
+/** 指定した関数のトリガーを外す */
+function dropTriggers_(names) {
+  let n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (names.indexOf(t.getHandlerFunction()) >= 0) { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return n;
+}
+
+/** 知らせ先。設定が空なら、トリガーを作った人のアドレス */
+function notifyTo_() {
+  if (CFG.NIGHTLY.NOTIFY) return CFG.NIGHTLY.NOTIFY;
+  try { return Session.getEffectiveUser().getEmail() || ''; } catch (e) { return ''; }
+}
+
+/** 知らせる。送れなくても処理は続けます(通知の失敗で確定を止めない) */
+function notify_(subject, lines) {
+  const to = notifyTo_();
+  const body = lines.join('\n');
+  console.log('［通知］' + subject + '\n' + body);
+  if (!to) { console.warn('知らせ先が分からないので、メールは送っていません'); return false; }
+  try {
+    MailApp.sendEmail(to, '[' + CFG.STORE_NAME + '] ' + subject, body);
+    return true;
+  } catch (e) {
+    console.error('メールを送れませんでした: ' + e);
+    return false;
+  }
+}
+
+/** 見にいく月。新しい順に LOOK_BACK か月ぶん */
+function nightlyMonths_() {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < Math.max(1, CFG.NIGHTLY.LOOK_BACK); i++) {
+    out.push(Utilities.formatDate(
+      new Date(now.getFullYear(), now.getMonth() - i, 1), CFG.TZ, 'yyyy-MM'));
+  }
+  return out;
+}
+
+/**
+ * いま確定できる月と、できない月を仕分ける。
+ * 確定済みの月は、どちらにも入れません(作り直しは人がやることなので)。
+ */
+function nightlyTargets_() {
+  const ready = [], blocked = [];
+  const idx = dailyIndex_();
+  const terms = termList_();
+  nightlyMonths_().forEach(function (m) {
+    const chk = freezeCheck_(m, idx, terms);
+    if (chk.frozen) return;
+    if (chk.ok) ready.push(chk); else blocked.push(chk);
+  });
+  // 古い月から片づける
+  ready.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+  return { ready: ready, blocked: blocked };
+}
+
+/**
+ * 途中で止まったままのジョブを片づける。
+ *
+ * これが無いと、一度こけたきり「別の出力を実行中です」で
+ * 毎晩見送られ続け、誰も気づきません。
+ */
+function sweepStuckJob_() {
+  const job = currentJob_();
+  if (!job || job.state !== 'running') return false;
+
+  const t0 = job.startedAt ? new Date(job.startedAt).getTime() : 0;
+  const hours = t0 ? (Date.now() - t0) / 3600000 : 999;
+  if (hours < CFG.NIGHTLY.STUCK_HOURS) return false;
+
+  trashTemp_(job);
+  job.state = 'error';
+  job.message = '途中で止まったまま ' + Math.floor(hours) + ' 時間が過ぎたため片づけました';
+  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+  console.warn(job.message);
+  audit_('止まった出力を片づけた', (job.title || '') + '：' + job.message, '夜間自動');
+  return true;
+}
+
+/** 夜間に始めたジョブか(人が画面から始めたものには手を出さないため) */
+function isNightlyJob_(job) { return !!(job && job.auto); }
+
+/**
+ * 毎晩のトリガーが呼ぶ入口。
+ *
+ * 1. 止まったままのジョブを片づける
+ * 2. ほかの出力が走っていれば、その晩は見送る
+ * 3. 確定できる月があれば、いちばん古いものを1つ確定する
+ * 4. 月が終わっているのに確定できない月があれば、その理由を知らせる
+ */
+function nightlyFreeze() {
+  try {
+    if (!CFG.NIGHTLY.ENABLED) { console.log('CFG.NIGHTLY.ENABLED が false のため、何もしません'); return; }
+
+    sweepStuckJob_();
+
+    const cur = currentJob_();
+    if (cur && cur.state === 'running') {
+      console.log('ほかの出力が実行中のため、今夜は見送ります（' + (cur.title || '') + '）');
+      return;
+    }
+
+    if (!ss_().getSheetByName(T_().SHEET)) {
+      notify_('夜間の自動確定を実行できません', [
+        '帳票テンプレートのシートがありません。',
+        'スクリプトエディタで buildTemplate を実行してください。'
+      ]);
+      return;
+    }
+
+    const t = nightlyTargets_();
+
+    // 月が終わっているのに確定できない月は、放っておくと溜まるので知らせる
+    remindOverdue_(t.blocked);
+
+    if (!t.ready.length) { console.log('今夜 確定できる月はありませんでした'); return; }
+
+    const chk = t.ready[0];
+    console.log('［' + chk.month + '］確定を始めます（第' + chk.nextVersion + '版）');
+
+    const job = startFreeze({ month: chk.month, actor: '夜間自動' });
+    job.auto = true;
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    audit_('夜間の自動確定を開始', chk.month + '（第' + chk.nextVersion + '版）', '夜間自動');
+
+    nightlyStep_();
+  } catch (err) {
+    console.error('nightlyFreeze failed: ' + (err && err.stack ? err.stack : err));
+    notify_('夜間の自動確定でエラーが起きました', [
+      String(err && err.message ? err.message : err),
+      '',
+      '記録は失われていません。画面から［この月を確定］を押せば手で確定できます。'
+    ]);
+  }
+}
+
+/**
+ * 続きのトリガーが呼ぶ入口。
+ *
+ * 使い捨てなので、まず自分を外します。外し忘れると、
+ * 1スクリプト20個までのトリガー枠をじわじわ食い潰します。
+ */
+function nightlyFreezeContinue() {
+  dropTriggers_([NIGHTLY_CONT_FN]);
+  try {
+    const job = currentJob_();
+    if (!isNightlyJob_(job) || job.state !== 'running') {
+      console.log('続ける対象がありません');
+      return;
+    }
+    nightlyStep_();
+  } catch (err) {
+    console.error('nightlyFreezeContinue failed: ' + (err && err.stack ? err.stack : err));
+    notify_('夜間の自動確定でエラーが起きました（続きの処理）', [
+      String(err && err.message ? err.message : err)
+    ]);
+  }
+}
+
+/**
+ * 帳票づくりを1回ぶんだけ進める。
+ *
+ * runExportChunk はこの中で1度しか呼びません。2度呼ぶと、
+ * 1回目が上限いっぱいまで使ったときに6分を越えて途中で殺されます。
+ * 終わっていなければ、続きは1分後のトリガーに渡します。
+ */
+function nightlyStep_() {
+  const job = runExportChunk(CFG.NIGHTLY.BUDGET_MS);
+
+  if (job && job.state === 'running') {
+    ScriptApp.newTrigger(NIGHTLY_CONT_FN).timeBased().after(60 * 1000).create();
+    console.log('  ' + job.done + ' / ' + job.weeks.length + ' 週まで。続きは1分後に');
+    return job;
+  }
+
+  if (job && job.state === 'done') {
+    console.log('［' + job.month + '］第' + job.version + '版を確定しました');
+    notify_(job.month + ' を確定しました（第' + job.version + '版）', [
+      job.month + ' の業務日報を、夜間の自動処理で確定しました。',
+      '',
+      '  版      : 第' + job.version + '版',
+      '  ページ  : ' + job.weeks.length + ' 週ぶん',
+      '  置き場所: 業務日報_出力／' + job.month.slice(0, 4),
+      '  PDF     : ' + job.pdfUrl,
+      '',
+      '記録を直したいときは、記録簿で承認を解除して直し、',
+      'もう一度確定してください。前の版は消えません。'
+    ]);
+    return job;
+  }
+
+  const why = (job && job.message) || '理由不明';
+  console.error('確定できませんでした: ' + why);
+  notify_('夜間の自動確定に失敗しました', [
+    why,
+    '',
+    '記録は失われていません。画面から［この月を確定］を押せば手で確定できます。'
+  ]);
+  return job;
+}
+
+/**
+ * 月が終わっているのに確定できていない月を知らせる。
+ *
+ * 当月はまだ途中なので知らせません(毎晩届いても意味がないため)。
+ * 同じ月について1日1通までにします。
+ */
+function remindOverdue_(blocked) {
+  const today = today_();
+  const late = blocked.filter(function (c) { return c.stat.end < today; });
+  if (!late.length) return 0;
+
+  const key = 'NIGHTLY_REMINDED';
+  const mark = today + '|' + late.map(function (c) { return c.month; }).join(',');
+  if (PROP.getProperty(key) === mark) return 0;
+  PROP.setProperty(key, mark);
+
+  const lines = ['月が終わっているのに、まだ確定できていない月があります。', ''];
+  late.forEach(function (c) {
+    lines.push('■ ' + c.month);
+    c.reasons.forEach(function (r) { lines.push('   ・' + r); });
+    lines.push('   記録 ' + c.stat.filled + ' / ' + c.stat.days + ' 日'
+      + '　承認 ' + c.stat.approved + ' 日');
+    lines.push('');
+  });
+  lines.push('記録簿の画面で足りない日を埋めて承認すると、');
+  lines.push('その日の夜に自動で確定します。');
+
+  notify_('確定できていない月があります（' + late.map(function (c) { return c.month; }).join('、') + '）',
+          lines);
+  return late.length;
+}
+
+/**
+ * ★ 手で実行して、夜間の自動確定がどうなっているかを見ます。
+ */
+function nightlyStatus() {
+  const out = [];
+  const say = function (l) { out.push(l); console.log(l); };
+
+  const trig = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === NIGHTLY_FN;
+  });
+  const cont = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === NIGHTLY_CONT_FN;
+  });
+
+  say('■ 夜間の自動確定');
+  say('   トリガー : ' + (trig.length ? 'あります（' + CFG.NIGHTLY.HOUR + '時台）'
+    : 'ありません。setupNightlyFreeze を実行してください'));
+  if (cont.length) say('   続きの予約: ' + cont.length + ' 件（処理の途中です）');
+  say('   動作     : ' + (CFG.NIGHTLY.ENABLED ? '有効' : '★ CFG.NIGHTLY.ENABLED が false'));
+  say('   知らせ先 : ' + (notifyTo_() || '★ 分かりません。CFG.NIGHTLY.NOTIFY に書いてください'));
+
+  const job = currentJob_();
+  say('');
+  say('■ いまの出力');
+  if (!job) say('   ありません');
+  else say('   ' + (job.title || '') + '：' + job.state
+    + (job.state === 'running' ? '（' + job.done + ' / ' + job.weeks.length + ' 週）' : '')
+    + (isNightlyJob_(job) ? '／夜間自動' : '／画面から'));
+
+  const t = nightlyTargets_();
+  say('');
+  say('■ 見ている月（' + nightlyMonths_().join('、') + '）');
+  if (t.ready.length) {
+    t.ready.forEach(function (c) {
+      say('   ［' + c.month + '］今夜 確定します（第' + c.nextVersion + '版）');
+    });
+  }
+  t.blocked.forEach(function (c) {
+    say('   ［' + c.month + '］' + c.reasons.join(' / '));
+  });
+  if (!t.ready.length && !t.blocked.length) say('   確定済みです');
+
+  return out.join('\n');
 }
