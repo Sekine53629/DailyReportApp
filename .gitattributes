@@ -1,2 +1,9 @@
 # GAS / Web files are LF everywhere (Tier 1: LF for non Windows-native files)
 * text=auto eol=lf
+
+# 画像はバイナリとして扱う（改行変換の対象外）
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
