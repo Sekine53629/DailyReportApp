@@ -192,11 +192,6 @@ const COLS = {
           '調剤室温度', '調剤室湿度', '冷所温度', '冷所湿度',
           // 帳票 上段F列。自由記述。1日1つ
           '管理に関する事項',
-          // ↓ ここから8列は、譲渡記録を別シートに移す前の置き場所。
-          //   新しい記録は「譲渡記録」シートに入ります。移行前のデータを
-          //   見失わないよう、読み取りの控えとして残してあります。
-          '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
-          '包装形態', '譲渡数', 'Lot', '使用期限',
           '担当者', '入力日時', '管理者', '承認日時', '状態', '編集者', '編集開始'],
   STAFF: ['ID', '氏名', 'メール', '在籍', '印影ファイルID', '登録日時'],
   TERM:  ['ID', '担当者ID', '氏名', '就任日'],
@@ -211,6 +206,17 @@ const COLS = {
           '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
           '包装形態', '譲渡数', 'Lot', '使用期限', '登録日時', '登録者']
 };
+
+/**
+ * 昔の形。日報DBの列で譲渡記録を持っていたころの8列です。
+ *
+ * 新しく作るブックには足しません（COLS.DAILY に入れると、
+ * 落としても ensureColumns_ が作り直してしまうため）。
+ * 古いブックには残っているので、移行が済むまでは読み取りの控えとして使い、
+ * updateDatabase で移したあとは dropLegacyXferColumns で落とせます。
+ */
+const LEGACY_XFER_COLS = ['譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
+                          '包装形態', '譲渡数', 'Lot', '使用期限'];
 
 const PROP = PropertiesService.getScriptProperties();
 
@@ -240,6 +246,7 @@ function setup() {
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
   Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
+  Logger.log('Code.gs を新しくしたときは updateDatabase を1回実行してください。');
   Logger.log('');
   Logger.log('次に「デプロイ > 新しいデプロイ > 種類:ウェブアプリ」を実行してください。');
   Logger.log('  次のユーザーとして実行 : ' +
@@ -1070,9 +1077,11 @@ function saveDay_(p) {
       '編集者': '',
       '編集開始': ''
     };
-    // 譲渡記録は別シートへ移したので、日報DBの旧8列は空にしておく。
-    // 残したままだと、譲渡を1件も入れずに保存したときに古い値が復活する
-    XFER_MAP.forEach(function (m) { patch[m.col] = ''; });
+    // 旧8列が残っているブックでは空にしておく。残したままだと、譲渡を1件も
+    // 入れずに保存したときに古い値が復活する。落としたブックでは何もしない
+    LEGACY_XFER_COLS.forEach(function (c) {
+      if (idx.t.header.indexOf(c) >= 0) patch[c] = '';
+    });
 
     if (row) writeRow_(idx.t, row._row, patch);
     else appendRow_(idx.t, patch);
@@ -1325,6 +1334,11 @@ function migrateXfers() {
   const xi = xferIndex_();
   const moved = [];
 
+  if (!LEGACY_XFER_COLS.some(function (c) { return idx.t.header.indexOf(c) >= 0; })) {
+    console.log('日報DBに旧8列はありません。移すものはありません');
+    return 0;
+  }
+
   idx.t.rows.forEach(function (r) {
     if (String(r['店舗コード']) !== CFG.STORE_CODE) return;
     const iso = fmt_(r['日付']);
@@ -1348,7 +1362,9 @@ function migrateXfers() {
   moved.forEach(function (x) {
     writeXfers_(x.iso, [x.one], '移行');
     const patch = {};
-    XFER_MAP.forEach(function (m) { patch[m.col] = ''; });
+    LEGACY_XFER_COLS.forEach(function (c) {
+      if (idx.t.header.indexOf(c) >= 0) patch[c] = '';
+    });
     writeRow_(idx.t, x.row, patch);
     console.log('  ' + x.iso + '  ' + xferOne_(x.one));
   });
@@ -1356,6 +1372,117 @@ function migrateXfers() {
   console.log(moved.length + ' 件を「' + SH.XFER + '」シートへ移しました');
   audit_('譲渡記録を別シートへ移行', moved.length + ' 件', '');
   return moved.length;
+}
+
+/* ------------------------------------------------------------
+ *  ブックを新しい形に合わせる
+ *
+ *  Code.gs を貼り替えたあと、これを1回実行すれば済むようにしてあります。
+ *  シートの作成・列の追加・書式・データの移行を、正しい順番で通します。
+ *  何度実行しても同じ結果になります(済んでいるものは飛ばします)。
+ * ---------------------------------------------------------- */
+
+/**
+ * ★ Code.gs を新しくしたら、これを1回実行してください。
+ *
+ *    やること
+ *      1. 足りないシートを作る
+ *      2. 足りない列を足す
+ *      3. 日付の列を文字列書式にする(タイムゾーンで1日ずれるのを防ぐ)
+ *      4. 印影フォルダを用意する
+ *      5. 古い形のデータを新しい置き場所へ移す
+ *      6. 残っている手作業を知らせる
+ */
+function updateDatabase() {
+  const out = [];
+  const say = function (line) { out.push(line); console.log(line); };
+
+  say('■ シート');
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const cols = SHEET_COLS[name];
+    const had = !!ss_().getSheetByName(name);
+    const missing = had ? missingColumns_(name, cols) : cols.slice();
+    ensureSheet_(name, cols);
+    SCHEMA_CHECKED[name] = true;
+    if (!had) say('   ［' + name + '］作りました（' + cols.length + '列）');
+    else if (missing.length) say('   ［' + name + '］列を追加: ' + missing.join('、'));
+    else say('   ［' + name + '］そろっています');
+  });
+
+  say('');
+  say('■ 日付の書式');
+  formatTextColumn_(SH.DAILY, '日付');
+  formatTextColumn_(SH.TERM,  '就任日');
+  formatTextColumn_(SH.XFER,  '日付');
+  say('   日報DB.日付 / 管理薬剤師任期.就任日 / 譲渡記録.日付 を文字列にしました');
+
+  say('');
+  say('■ 印影フォルダ');
+  try {
+    sealFolder_();
+    say('   ' + CFG.SEAL_FOLDER_NAME + '（共有しないでください）');
+  } catch (e) {
+    say('   用意できませんでした: ' + e);
+  }
+
+  say('');
+  say('■ 譲渡記録の移行');
+  const moved = migrateXfers();
+  if (!moved) say('   移すものはありませんでした');
+
+  say('');
+  say('■ 残っていること');
+  const t = table_(SH.DAILY);
+  const legacy = LEGACY_XFER_COLS.filter(function (c) { return t.header.indexOf(c) >= 0; });
+  if (legacy.length) {
+    say('   日報DBに古い列が ' + legacy.length + ' つ残っています: ' + legacy.join('、'));
+    say('   中身は移し終えているので、dropLegacyXferColumns で落とせます');
+  } else {
+    say('   古い列はありません');
+  }
+  if (!ss_().getSheetByName(T_().SHEET)) {
+    say('   帳票テンプレートがありません。buildTemplate を実行してください');
+  }
+
+  say('');
+  say('おわり。デプロイし直すと画面にも反映されます。');
+  audit_('ブックを新しい形に合わせた',
+    (moved ? '譲渡記録を ' + moved + ' 件移行' : '移行なし'), '');
+  return out.join('\n');
+}
+
+/**
+ * ★ 移行のあとで、日報DBに残っている古い8列を落とします。
+ *
+ *    中身が1つでも残っている列は落としません(先に updateDatabase を実行してください)。
+ *    列を消すと元に戻せないので、実行前にブックのコピーを取っておくと安心です。
+ */
+function dropLegacyXferColumns() {
+  const t = table_(SH.DAILY);
+  const present = LEGACY_XFER_COLS.filter(function (c) { return t.header.indexOf(c) >= 0; });
+  if (!present.length) {
+    console.log('古い列はありません');
+    return 0;
+  }
+
+  // 1つでも中身が残っていたら触らない
+  const left = present.filter(function (c) {
+    return t.rows.some(function (r) { return String(r[c] || '').trim(); });
+  });
+  if (left.length) {
+    console.log('★ まだ中身が残っている列があります: ' + left.join('、'));
+    console.log('   先に updateDatabase を実行して、譲渡記録へ移してください');
+    return 0;
+  }
+
+  // 右から消す(左から消すと、そのたびに列番号がずれる)
+  present.map(function (c) { return t.header.indexOf(c) + 1; })
+    .sort(function (a, b) { return b - a; })
+    .forEach(function (col) { t.sh.deleteColumn(col); });
+
+  console.log(present.length + ' 列を落としました: ' + present.join('、'));
+  audit_('日報DBの古い列を削除', present.join('、'), '');
+  return present.length;
 }
 
 /** 期限切れの編集ロックを掃除する。1日1回のトリガーに入れておくと安心 */
