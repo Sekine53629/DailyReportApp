@@ -2621,11 +2621,13 @@ function printFit_() {
  *    1週間ぶんだけ作って、複製・値の書き込み・印影に分けて出します。
  *    速くしたいときは、まずこれで当たりを付けてください。
  */
-function benchmarkExport() {
+/** @param {string} [anchorIso] 測る週。渡さなければ先週を測ります */
+function benchmarkExport(anchorIso) {
   const idx = dailyIndex_();
   const terms = termList_();
   const tpl = templateSheet_();
-  const start = addDays_(weekStart_(today_()), -7);   // 先週(記録がある想定)
+  // 渡されたらその週、無ければ先週(記録がある想定)
+  const start = anchorIso ? weekStart_(fmt_(anchorIso)) : addDays_(weekStart_(today_()), -7);
 
   let t0 = Date.now();
   const seals = sealBlobMap_();
