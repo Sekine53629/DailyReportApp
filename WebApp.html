@@ -75,6 +75,13 @@
 
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
+
+/* hidden は必ず効かせる。
+   ブラウザ既定の [hidden]{display:none} はユーザーエージェント側のルールなので、
+   .cols{display:grid} のように作者側で display を指定すると負けてしまう。
+   これが無いと、記録簿を選んでも入力画面が消えず、その下に記録簿が続いて出る。
+   画面の出し分けは hidden 一本でやっているので、ここで確実に止める。 */
+[hidden]{display:none !important}
 body{
   background:var(--ground);
   color:var(--ink);
@@ -135,7 +142,6 @@ button,input,select{font:inherit;color:inherit}
 @keyframes nudge{
   0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)}
 }
-.pickme[hidden]{display:none}
 .pickme{
   position:absolute;top:100%;right:74px;margin-top:6px;z-index:40;
   display:flex;align-items:center;gap:6px;max-width:min(19em,calc(100vw - 24px));
@@ -243,7 +249,6 @@ button,input,select{font:inherit;color:inherit}
 }
 @media (max-width:400px){ .weeknav .jump{margin-left:0;width:100%} }
 
-.pastbar[hidden]{display:none}
 .pastbar{
   display:flex;align-items:center;gap:4px;flex-wrap:wrap;
   padding:8px 16px;background:var(--info-soft);
@@ -591,7 +596,6 @@ button,input,select{font:inherit;color:inherit}
    長い出力では画面を見ていられないので、スクロールしても
    画面を移動しても、いつでも残り時間が見えるようにする。
    ============================================================ */
-.jobbar[hidden]{display:none}
 .jobbar{
   position:fixed;left:0;right:0;bottom:0;z-index:55;
   background:color-mix(in srgb, var(--surface) 96%, transparent);
@@ -691,7 +695,6 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    1か月ぶんを、帳票と同じ書式で週ごとに続けて表示する。
    立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
    ============================================================ */
-.lgview[hidden]{display:none}
 .lgview{max-width:1200px;margin:0 auto;padding:0 14px 60px}
 .lgview.narrow{max-width:720px}
 
@@ -736,7 +739,6 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-stat.crit .v{color:var(--crit)}
 
 /* 確定のパネル(記録簿)と、確定簿の一覧 */
-.lg-fix[hidden]{display:none}
 .lg-fix{
   display:flex;align-items:flex-start;gap:10px;
   border:1px solid var(--line);border-radius:10px;
@@ -759,7 +761,6 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .fx-tool select{font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid var(--line);
   border-radius:6px;background:var(--surface);color:var(--ink)}
 .fx-tool .hint{flex-basis:100%;font-size:11.5px;color:var(--muted);line-height:1.6}
-.fx-report[hidden]{display:none}
 .fx-report{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
   font-size:12.5px;line-height:1.7;background:var(--surface-2)}
 .fx-report.good{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
@@ -792,7 +793,6 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .fx-ver.void{opacity:.6}
 .fx-ver.void .nm{color:var(--muted);text-decoration:line-through}
 
-.lg-alerts[hidden]{display:none}
 .lg-alerts{
   background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
   border-radius:10px;padding:10px 13px;margin-bottom:14px;font-size:12px;line-height:1.7;
