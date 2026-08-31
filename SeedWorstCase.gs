@@ -252,7 +252,8 @@ function seedPreflight_() {
     ['weekStart_()',     typeof weekStart_],
     ['weeksBetween_()',  typeof weeksBetween_],
     ['freezeCheck_()',   typeof freezeCheck_],
-    ['startFreeze()',    typeof startFreeze],
+    ['freezeWeeks()',    typeof freezeWeeks],
+    ['openWeeks_()',     typeof openWeeks_],
     ['runExportChunk()', typeof runExportChunk],
     ['benchmarkExport()', typeof benchmarkExport]
   ];
@@ -426,11 +427,15 @@ function seedWorstCaseMonth() {
   say('   譲渡記録 ' + nX + ' 行（1日 ' + SEED.XFERS_PER_DAY + ' 件）');
 
   /* ---- 確認 ---- */
-  const chk = freezeCheck_(SEED.MONTH);
   say('');
-  say('■ ' + SEED.MONTH + ' は確定できるか');
-  say('   ' + (chk.ok ? 'できます（第' + chk.nextVersion + '版）'
-    : '★ できません：' + chk.reasons.join(' / ')));
+  say('■ 確定できるか（確定は週の単位です）');
+  const ready = weeks.filter(function (w) { return freezeCheck_(w).ok; });
+  weeks.forEach(function (w) {
+    const c = freezeCheck_(w);
+    say('   ' + c.label + '　' + (c.ok ? '確定できます（第' + c.nextVersion + '版）'
+      : '★ ' + c.reasons.join(' / ')));
+  });
+  say('   → ' + ready.length + ' / ' + weeks.length + ' 週');
 
   say('');
   say('■ 見込み');
@@ -609,38 +614,53 @@ function benchmarkWorstCase() {
 
 /**
  * ★ 3. 実際に6週ぶんを確定してみます（画面から確定するのと同じ経路）。
- *      1回の実行が6分に収まらない場合は、続きを自分で呼び直します。
+ *
+ *    確定は週の単位（1週=1ページ）なので、6週なら6回に分かれます。
+ *    夜間は1回ごとに実行が分かれるので、1回あたりの秒数を見てください。
  */
 function freezeWorstCase() {
-  const chk = freezeCheck_(SEED.MONTH);
-  if (!chk.ok) {
-    console.log('まだ確定できません：' + chk.reasons.join(' / '));
-    console.log('先に seedWorstCaseMonth() を実行してください');
-    return chk;
+  const r = seedRange_();
+  const weeks = weeksBetween_(r.from, r.to);
+  const ready = weeks.filter(function (w) { return freezeCheck_(w).ok; });
+
+  if (!ready.length) {
+    console.log('確定できる週がありません。先に seedWorstCaseMonth() を実行してください');
+    weeks.forEach(function (w) {
+      const c = freezeCheck_(w);
+      if (!c.ok) console.log('  ' + c.label + '：' + c.reasons.join(' / '));
+    });
+    return null;
   }
+
   clearExport();
-  startFreeze({ month: SEED.MONTH, actor: '測定',
-                note: chk.frozen ? '測定用にもう一度' : '' });
+  console.log('■ ' + ready.length + ' 週を確定します（1週 = 1ページ = 1PDF）');
+  let job = freezeWeeks({ weeks: ready, actor: '測定',
+                          note: '測定用にもう一度' });
 
   const t0 = Date.now();
+  const spans = [];
   let n = 0;
-  let job = null;
   do {
-    const s = Date.now();
+    const s0 = Date.now();
+    const before = (job.frozen || []).length;
     job = runExportChunk(CFG.NIGHTLY.BUDGET_MS);
+    const took = (Date.now() - s0) / 1000;
+    spans.push(took);
     n++;
-    console.log('  ' + n + ' 回目: ' + ((Date.now() - s) / 1000).toFixed(1) + ' 秒 → '
-      + job.done + ' / ' + job.weeks.length + ' 週');
-  } while (job && job.state === 'running' && n < 20);
+    console.log('  ' + n + ' 回目: ' + took.toFixed(1) + ' 秒'
+      + '（焼けた週 ' + ((job.frozen || []).length) + ' / ' + ready.length + '）');
+  } while (job && job.state === 'running' && n < 40);
 
+  const worst = spans.reduce(function (m, x) { return Math.max(m, x); }, 0);
   console.log('');
   console.log('■ 結果: ' + job.state + '（' + n + ' 回 / 合計 '
     + ((Date.now() - t0) / 1000).toFixed(1) + ' 秒）');
-  if (job.weekMs) console.log('   1週あたり ' + (job.weekMs / 1000).toFixed(1) + ' 秒');
-  if (job.pdfUrl) console.log('   PDF: ' + job.pdfUrl);
+  console.log('   1回あたり いちばん長かったの ' + worst.toFixed(1) + ' 秒');
+  console.log('   ' + (worst < 300 ? '6分(360秒)の上限に余裕があります'
+    : '★ 6分に近づいています。CFG.NIGHTLY.BUDGET_MS を下げてください'));
   console.log('');
-  console.log('   ※ ここでは待たずに続けて呼んでいます。夜間は1回ごとに実行が分かれるので、');
-  console.log('     1回あたりの秒数が6分(360秒)を超えていないかを見てください。');
+  console.log('   ※ ここでは待たずに続けて呼んでいます。夜間は1回ごとに実行が');
+  console.log('     分かれるので、上の「1回あたり」が360秒を超えていないかを見てください。');
   return job;
 }
 
@@ -687,15 +707,18 @@ function clearWorstCaseMonth() {
     + '（本番の方の印影には触れていません）');
 
   /* ---- 確定台帳。消さずに知らせる ---- */
-  const fixes = fixOf_(SEED.MONTH);
+  const rr = seedRange_();
+  const target = {};
+  weeksBetween_(rr.from, rr.to).forEach(function (w) { target[w] = true; });
+  const fixes = fixList_().filter(function (x) { return target[x.week]; });
   say('');
   say('■ 確定台帳');
   if (!fixes.length) {
-    say('   ' + SEED.MONTH + ' の確定はありません');
+    say('   この期間の確定はありません');
   } else {
     say('   ★ ' + fixes.length + ' 件残っています。中身を見て、要らなければ手で消してください');
     fixes.forEach(function (f) {
-      say('     ' + f.month + ' 第' + f.version + '版　' + f.name);
+      say('     ' + f.label + ' 第' + f.version + '版　' + f.name);
       say('       ' + f.url);
     });
     say('   台帳の途中の行を消すと、そのあとの行の連鎖が合わなくなります。');

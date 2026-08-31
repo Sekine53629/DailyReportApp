@@ -612,6 +612,8 @@ button,input,select{font:inherit;color:inherit}
 
 /* ---- 確定簿(独立した画面) ---- */
 #viewExport .card-bd{padding:14px 16px 16px}
+.fx-tool input[type="date"]{font:inherit;font-size:12.5px;padding:4px 6px;
+  border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
 @media (max-width:640px){ #viewExport .card-bd{padding:12px} }
 .tilde{color:var(--muted);font-size:13px}
 /* ============================================================
@@ -797,6 +799,32 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .fx-rep-list>div.bad{color:var(--crit);font-weight:600}
 .fx-rep-list code{font-family:var(--mono);font-size:11px;color:var(--muted)}
 .fx-ver .hash{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+/* 週の見出しに出す、確定の様子 */
+.lg-week > h3 .wk-fix{
+  font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;
+  border:1px solid transparent;letter-spacing:.02em;
+}
+.lg-week > h3 .wk-fix.ok  {color:var(--ok);background:var(--ok-soft);
+  border-color:color-mix(in srgb,var(--ok) 25%,transparent)}
+.lg-week > h3 .wk-fix.go  {color:var(--info);background:var(--info-soft);
+  border-color:color-mix(in srgb,var(--info) 25%,transparent)}
+.lg-week > h3 .wk-fix.wait{color:var(--muted);background:var(--surface-2);
+  border-color:var(--line);font-weight:500}
+.lg-week > h3 .wk-pdf{font-size:10.5px;color:var(--accent);font-weight:700;text-decoration:none}
+.lg-week > h3 .wk-btn{font-family:var(--body);padding:2px 9px;font-size:10px}
+
+.fx-count{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+/* 確定簿：月の見出しの下に、週を並べる */
+.fx-weeks{display:flex;flex-direction:column}
+.fx-wk{border-top:1px solid var(--line)}
+.fx-wk:first-child{border-top:0}
+.fx-wk-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px}
+.fx-wk-hd .wl{font-family:var(--mono);font-size:13px;font-weight:600;
+  font-variant-numeric:tabular-nums}
+.fx-wk-hd .sp{flex:1}
+.fx-wk .fx-vers{background:var(--surface-2)}
+.fx-badge.part{background:var(--warn-soft);color:var(--warn)}
 .fx-list{display:flex;flex-direction:column;gap:12px}
 .fx-month{border:1px solid var(--line);border-radius:10px;background:var(--surface);
   box-shadow:var(--shadow);overflow:hidden}
@@ -1151,7 +1179,7 @@ table.pv td.st i.pend{
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
     <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
     <button class="btn primary" id="lgFix"
-      title="月が締まったらPDFに焼いて残します（月に1回）">この月を確定</button>
+      title="確定できる週を、まとめてPDFに焼いて残します">確定できる週を確定</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
@@ -2514,15 +2542,15 @@ function renderFix(){
   var h = '';
 
   if (!d.months.length){
-    h = '<div class="blockmsg"><div><b>確定した月はまだありません</b>'
-      + '記録簿を開いて、月のすべての日が承認されると［この月を確定する］が押せます。'
-      + '確定するとPDFがドライブに残り、ここに並びます。</div></div>';
+    h = '<div class="blockmsg"><div><b>確定した週はまだありません</b>'
+      + '記録簿を開いて、ある週の7日すべてが承認されると、その週の［確定］が押せます。'
+      + '確定するとPDF（1週=1ページ）がドライブに残り、ここに並びます。</div></div>';
     document.getElementById('pvBody').innerHTML = h;
     return;
   }
 
-  h += '<p class="fx-lead">確定した月のPDFです。'
-     + '記録を直したいときは、記録簿で承認を解除して直し、もう一度確定してください。'
+  h += '<p class="fx-lead">確定した週のPDFです。帳票は1週=1ページなので、確定も週の単位です。<br>'
+     + '記録を直したいときは、記録簿で承認を解除して直し、その週をもう一度確定してください。'
      + '前の版は消さずに残ります。<br>'
      + '確定したときのSHA-256を台帳に残しているので、'
      + '中身が変わっていないかをあとから確かめられます。</p>';
@@ -2530,17 +2558,13 @@ function renderFix(){
   h += fxTools_(d);
 
   h += '<div class="fx-list">' + d.months.map(function(m){
-    var cur = m.latest;
     return '<div class="fx-month">'
       + '<div class="fx-hd">'
       +   '<b>' + esc(m.label) + '</b>'
-      +   (cur ? '<span class="fx-badge">第' + cur.version + '版</span>'
-              : '<span class="fx-badge void">有効な版がありません</span>')
-      +   '<div class="sp"></div>'
-      +   (cur ? '<a class="btn primary" href="' + esc(cur.url) + '" target="_blank"'
-              + ' rel="noopener">PDFを開く</a>' : '')
+      +   '<span class="fx-badge' + (m.alive === m.total ? '' : ' part') + '">'
+      +     m.alive + ' / ' + m.total + ' 週</span>'
       + '</div>'
-      + '<div class="fx-vers">' + m.versions.map(fxVer_).join('') + '</div>'
+      + '<div class="fx-weeks">' + m.weeks.map(fxWeek_).join('') + '</div>'
       + '</div>';
   }).join('') + '</div>';
 
@@ -2549,36 +2573,60 @@ function renderFix(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-void]'), function(b){
     b.addEventListener('click', function(){ fxVoid(b.getAttribute('data-void')); });
   });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-more]'), function(b){
+    b.addEventListener('click', function(){
+      var box = document.getElementById('vers_' + b.getAttribute('data-more'));
+      if (box){ box.hidden = !box.hidden; b.textContent = box.hidden ? '前の版' : '閉じる'; }
+    });
+  });
   var zip = document.getElementById('fxZip');
   if (zip) zip.addEventListener('click', fxBundle);
   var ver = document.getElementById('fxVerify');
   if (ver) ver.addEventListener('click', fxVerify);
 }
 
+/* 週1つぶん。いまの版を大きく出し、前の版は畳んでおく
+   （「いつ何を直したか」が見えることが、この画面のいちばんの役目） */
+function fxWeek_(w){
+  var cur = w.latest;
+  var old = w.versions.filter(function(v){ return !cur || v.id !== cur.id; });
+  var key = w.week || w.label.replace(/[^0-9]/g, '');
+
+  return '<div class="fx-wk">'
+    + '<div class="fx-wk-hd">'
+    +   '<span class="wl">' + esc(w.label) + '</span>'
+    +   (cur ? '<span class="fx-badge">第' + cur.version + '版</span>'
+            : '<span class="fx-badge void">有効な版がありません</span>')
+    +   '<div class="sp"></div>'
+    +   (old.length ? '<button class="mini" data-more="' + esc(key) + '">前の版</button>' : '')
+    +   (cur ? '<a class="mini on" href="' + esc(cur.url) + '" target="_blank"'
+            + ' rel="noopener">PDFを開く</a>' : '')
+    + '</div>'
+    + (cur ? '<div class="fx-vers">' + fxVer_(cur) + '</div>' : '')
+    + (old.length
+        ? '<div class="fx-vers" id="vers_' + esc(key) + '" hidden>'
+          + old.map(fxVer_).join('') + '</div>'
+        : '')
+    + '</div>';
+}
+
 /* 確定簿の上に置く道具。
    ・まとめて渡す … 確定済みのPDFをそのままZIPにする（作り直さないのですぐ終わる）
    ・証跡を確認   … 記録したSHA-256と、いまのDrive上のPDFを突き合わせる */
 function fxTools_(d){
-  var opt = function(sel){
-    return d.months.map(function(m){
-      return '<option value="' + m.month + '"' + (m.month === sel ? ' selected' : '') + '>'
-        + esc(m.label) + '</option>';
-    }).join('');
-  };
-  var oldest = d.months[d.months.length - 1].month;
-  var newest = d.months[0].month;
-
+  var r = d.range || {};
   return '<div class="fx-tools">'
     + '<div class="fx-tool">'
     +   '<b>まとめて渡す</b>'
-    +   '<select id="fxFrom">' + opt(oldest) + '</select>'
+    +   '<input type="date" id="fxFrom" value="' + esc(r.from || '') + '">'
     +   '<span class="tilde">〜</span>'
-    +   '<select id="fxTo">' + opt(newest) + '</select>'
+    +   '<input type="date" id="fxTo" value="' + esc(r.to || '') + '">'
     +   '<button class="mini on" id="fxZip">ZIPにする</button>'
-    +   '<span class="hint">各月の「取り消していない最新版」を、確定したときのまま集めます。'
+    +   '<span class="hint">この期間に<b style="display:inline">かかる週</b>を、'
+    +     '確定したときのまま集めます。帳票は1週=1ページで、週は途中で切り分けられないので、'
+    +     '月末月初の週はまるごと付いてきます（目録に範囲を書いてあります）。<br>'
     +     'PDFを1つに結合しないのは、結合すると別のファイルになり、'
-    +     '台帳のハッシュと一致しなくなるためです。'
-    +     'ZIPにはSHA-256を書いた目録が入ります。</span>'
+    +     '台帳のハッシュと一致しなくなるためです。</span>'
     + '</div>'
     + '<div class="fx-tool">'
     +   '<b>証跡を確認</b>'
@@ -2594,7 +2642,8 @@ function fxTools_(d){
 function fxBundle(){
   var from = document.getElementById('fxFrom').value;
   var to   = document.getElementById('fxTo').value;
-  if (from > to){ toast('開始の月が終わりの月より後になっています', true); return; }
+  if (!from || !to){ toast('期間を選んでください', true); return; }
+  if (from > to){ toast('開始日が終了日より後になっています', true); return; }
 
   var btn = document.getElementById('fxZip');
   btn.disabled = true;
@@ -2605,12 +2654,16 @@ function fxBundle(){
     var box = document.getElementById('fxReport');
     box.hidden = false;
     box.className = 'fx-report';
-    box.innerHTML = '<b>' + esc(r.name) + '</b>（' + r.months + 'か月）'
+    box.innerHTML = '<b>' + esc(r.name) + '</b>（' + r.weeks + '週）'
       + '<a href="' + esc(r.url) + '" target="_blank" rel="noopener">ドライブで開く</a>'
       + '<div class="fx-rep-list">' + r.items.map(function(x){
-          return '<div>' + esc(x.month) + ' 第' + x.version + '版　'
+          return '<div>' + esc(x.label) + ' 第' + x.version + '版　'
             + '<code>' + esc((x.hash || '').slice(0, 16)) + '…</code></div>';
-        }).join('') + '</div>';
+        }).join('')
+      + (r.missing && r.missing.length
+          ? '<div class="bad">★ まだ確定していない週は入っていません：'
+            + r.missing.map(esc).join('、') + '</div>' : '')
+      + '</div>';
     toast('ZIPにまとめました');
   }, function(e){
     btn.disabled = false;
@@ -2638,7 +2691,7 @@ function fxVerify(){
         : r.total + ' 件すべて確定時のままです') + '</b>'
       + '<div class="fx-rep-list">' + r.items.map(function(x){
           return '<div class="' + (x.state === 'ok' ? '' : 'bad') + '">'
-            + esc(x.month) + ' 第' + x.version + '版' + (x.alive ? '' : '（取消）')
+            + esc(x.label) + ' 第' + x.version + '版' + (x.alive ? '' : '（取消）')
             + '　' + LB[x.state] + (x.detail ? '　' + esc(x.detail) : '')
             + '</div>';
         }).join('') + '</div>';
@@ -2847,8 +2900,9 @@ function estimateSec_(weeks){
 
 /** 走っているジョブの経過と残りを見積もる */
 function jobEta_(j){
-  var total = (j.weeks && j.weeks.length) || 0;
-  var done  = j.done || 0;
+  // 週をまとめて確定しているときは、焼き終えた週の数も足して数える
+  var total = j.pages || (j.weeks && j.weeks.length) || 0;
+  var done  = (j.frozen ? j.frozen.length : 0) + (j.done || 0);
   var out = { total:total, done:done, pct: total ? Math.round(done / total * 100) : 0,
               elapsed:0, remain:0, at:null };
 
@@ -2908,7 +2962,9 @@ function pumpJob_(){
       renderJob_();
       if (job && job.state === 'done'){
         toast(job.kind === 'freeze'
-          ? job.month + ' を第' + job.version + '版として確定しました'
+          ? ((job.frozen && job.frozen.length > 1)
+              ? job.frozen.length + ' 週を確定しました'
+              : (job.label || '') + ' を第' + job.version + '版として確定しました')
           : 'PDFを出力しました');
         // 確定したら、記録簿の表示と確定簿を新しくする
         if (job.kind === 'freeze'){
@@ -3013,12 +3069,14 @@ function paintJob_(){
   if (j.state === 'done'){
     var freeze = (j.kind === 'freeze');
     ttl.textContent = freeze
-      ? j.month + ' を第' + j.version + '版として確定しました'
+      ? (j.frozen && j.frozen.length > 1
+          ? j.frozen.length + ' 週を確定しました'
+          : (j.label || '') + ' を第' + j.version + '版として確定しました')
       : 'PDFを出力しました';
-    step.textContent = esc(j.title) + '（' + j.weeks.length + 'ページ）';
+    step.textContent = esc(j.title) + '（' + (j.pages || j.weeks.length) + 'ページ）';
     fill.style.width = '100%';
     time.innerHTML = 'ドライブの「業務日報_出力'
-      + (freeze ? '／' + j.month.slice(0, 4) : '') + '」に保存しました。'
+      + (freeze && j.month ? '／' + j.month.slice(0, 4) : '') + '」に保存しました。'
       + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>'
       + (freeze ? '<br>確定簿の画面から、いつでも開き直せます。'
                 + '中身が変わっていないかは［いま確かめる］で突き合わせられます。' : '');
@@ -3060,36 +3118,45 @@ function paintJob_(){
  * 2回目以降は作り直す理由を書いてもらいます。前の版は消さず、
  * 新しい版として積み増します。
  */
-function lgFreeze(){
+function lgFreeze(week){
   var d = LG.data, f = d && d.freeze;
   if (!f) return;
   if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
   if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-  if (!f.ok){ toast('この月はまだ確定できません：' + f.reasons.join('／'), true); return; }
 
+  // 週を渡されたらその週だけ（確定済みなら作り直し）。
+  // 渡されなければ、まだ確定していない週のうち、確定できるものをぜんぶ
+  var all = f.readyWeeks.concat(f.frozenWeeks || []);
+  var list = week
+    ? all.filter(function(w){ return w.week === week; })
+    : f.readyWeeks;
+  if (!list.length){ toast('確定できる週がありません', true); return; }
+
+  var again = list.filter(function(w){ return w.nextVersion > 1; });
   var note = '';
-  if (f.frozen){
-    note = prompt(d.monthLabel + ' には、すでに第' + f.latest.version + '版があります。\n'
-      + 'もう一度確定すると、第' + f.nextVersion + '版として積み増します'
-      + '（前の版は消えません）。\n\n'
+  if (again.length){
+    note = prompt(again.map(function(w){ return w.label; }).join('、')
+      + ' には、すでに確定した版があります。\n'
+      + 'もう一度確定すると、新しい版として積み増します（前の版は消えません）。\n\n'
       + '作り直す理由を書いてください。監査で参照されます。', '');
     if (note === null) return;
     if (!String(note).trim()){ toast('理由を書いてください', true); return; }
   }
 
-  var weeks = weekCount_(f.stat.start, f.stat.end);
-  var est = estimateSec_(weeks);
+  var est = estimateSec_(list.length);
   startJob_({
-    fn: 'startFreeze',
-    args: [{ month:f.month, note:note, actor:S.me }],
-    weeks: weeks,
-    title: d.monthLabel + ' 第' + f.nextVersion + '版',
-    confirm: d.monthLabel + ' を確定します（第' + f.nextVersion + '版）。\n'
-      + weeks + ' 週分 = ' + weeks + ' ページ。'
-      + (est ? '\nおよそ ' + humanSec_(est) + ' かかる見込みです。' : '')
-      + '\n\nドライブの「業務日報_出力／' + f.month.slice(0, 4) + '」に残ります。\n'
-      + 'あとから記録を直したいときは、承認を解除して直し、'
-      + 'もう一度確定してください。\n\nよろしいですか？'
+    fn: 'freezeWeeks',
+    args: [{ weeks: list.map(function(w){ return w.week; }), note: note, actor: S.me }],
+    weeks: list.length,
+    title: list.length === 1 ? list[0].label : (list.length + ' 週'),
+    confirm: (list.length === 1
+        ? list[0].label + ' を確定します。'
+        : '確定できる ' + list.length + ' 週を、まとめて確定します。\n'
+          + list.map(function(w){ return '  ・' + w.label; }).join('\n'))
+      + (est ? '\n\nおよそ ' + humanSec_(est) + ' かかる見込みです。' : '')
+      + '\n\n1週 = 1ページのPDFとして、ドライブの「業務日報_出力」に残ります。\n'
+      + 'あとから記録を直したいときは、承認を解除して直し、\n'
+      + 'その週をもう一度確定してください。\n\nよろしいですか？'
   });
 }
 
@@ -3506,41 +3573,52 @@ function lgFixBox_(d){
   box.hidden = false;
   box.classList.remove('ok', 'wait', 'go');
 
-  if (f.frozen){
-    var v = f.latest;
-    box.classList.add('ok');
-    box.innerHTML = '<span class="ic">✓</span><div class="bd">'
-      + '<b>確定済み　第' + v.version + '版</b>'
-      + esc(v.at) + '　' + esc(v.by || '—') + '　'
-      + '<a href="' + esc(v.url) + '" target="_blank" rel="noopener">PDFを開く</a>'
-      + (v.note ? '<br>' + esc(v.note) : '')
-      + '<br>記録を直したいときは、承認を解除して直し、'
-      + 'もう一度確定してください。前の版は残ります。'
-      + '</div>';
-    btn.disabled = false;
-    btn.textContent = '確定を作り直す';
-    return;
-  }
-
-  if (f.ok){
+  var h = '';
+  if (f.ready){
     box.classList.add('go');
-    box.innerHTML = '<span class="ic">●</span><div class="bd">'
-      + '<b>この月は確定できます</b>'
-      + 'すべての日が記録され、承認も済んでいます。'
-      + '［この月を確定］を押すとPDFに焼いて、ドライブに残します。'
-      + '</div>';
-    btn.disabled = false;
-    btn.textContent = 'この月を確定';
-    return;
+    h = '<b>' + f.ready + ' 週を確定できます</b>'
+      + f.readyWeeks.map(function(w){
+          return esc(w.label) + (w.nextVersion > 1 ? '（第' + w.nextVersion + '版）' : '');
+        }).join('　')
+      + '<br>［確定できる週を確定］を押すとPDFに焼いて、ドライブに残します。';
+  } else if (f.frozen === f.total){
+    box.classList.add('ok');
+    h = '<b>この月の ' + f.total + ' 週はすべて確定済みです</b>'
+      + '各週のPDFは、下の週見出しか確定簿の画面から開けます。<br>'
+      + '記録を直したいときは、承認を解除して直し、その週をもう一度確定してください。'
+      + '前の版は残ります。';
+  } else {
+    box.classList.add('wait');
+    h = '<b>まだ確定できません</b>'
+      + '<ul>' + f.waitingWeeks.map(function(w){
+          return '<li>' + esc(w.label) + '：' + esc(w.reasons.join('／')) + '</li>';
+        }).join('') + '</ul>'
+      + (f.waiting > f.waitingWeeks.length
+          ? 'ほか ' + (f.waiting - f.waitingWeeks.length) + ' 週' : '');
   }
 
-  box.classList.add('wait');
-  box.innerHTML = '<span class="ic">…</span><div class="bd">'
-    + '<b>まだ確定できません</b>'
-    + '<ul>' + f.reasons.map(function(r){ return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>'
-    + '</div>';
-  btn.disabled = true;
-  btn.textContent = 'この月を確定';
+  h += '<br><span class="fx-count">確定済み ' + f.frozen + ' / ' + f.total + ' 週</span>';
+  box.innerHTML = '<span class="ic">' + (f.ready ? '●' : f.frozen === f.total ? '✓' : '…')
+    + '</span><div class="bd">' + h + '</div>';
+
+  btn.disabled = !f.ready;
+  btn.textContent = f.ready ? ('確定できる週を確定（' + f.ready + '）') : '確定できる週を確定';
+}
+
+/* 週の見出しに出す、その週の確定の様子 */
+function lgWeekFix_(w){
+  var f = w.freeze;
+  if (!f) return '';
+  if (f.frozen){
+    return '<span class="wk-fix ok">確定済 第' + f.latest.version + '版</span>'
+      + '<a class="wk-pdf" href="' + esc(f.latest.url) + '" target="_blank" rel="noopener">PDF</a>'
+      + '<button class="rowbtn wk-btn" data-fix="' + w.start + '">作り直す</button>';
+  }
+  if (f.ok){
+    return '<span class="wk-fix go">確定できます</span>'
+      + '<button class="rowbtn go wk-btn" data-fix="' + w.start + '">確定</button>';
+  }
+  return '<span class="wk-fix wait">' + esc(f.reasons.join('／')) + '</span>';
 }
 
 function lgStat_(k, v, cls){
@@ -3599,11 +3677,11 @@ function lgRender(){
       + '実行すると「帳票テンプレート」シートが作られ、この画面に実際の書式で表示されます。'
       + '</div></div>';
   } else {
+    // 週は日付の範囲で呼びます（週番号では誰も探さないので）
     document.getElementById('lgBody').innerHTML = d.weeks.map(function(w, i){
       return '<section class="lg-week">'
-        + '<h3>第' + (i + 1) + '週'
-        +   '<span class="pg">' + w.start.replace(/-/g, '/') + ' 〜 '
-        +     w.end.slice(5).replace('-', '/') + '</span>'
+        + '<h3><span class="pg">' + esc(w.label) + '</span>'
+        +   lgWeekFix_(w)
         +   '<span class="pg right">印刷 ' + (i + 1) + ' / ' + d.weeks.length + ' ページ</span>'
         + '</h3>'
         + '<div class="lg-sheet">' + lgTable_(w) + '</div>'
@@ -3632,7 +3710,7 @@ document.getElementById('navLedger').addEventListener('click', function(){ showV
 document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
 document.getElementById('btnAdmin').addEventListener('click', function(){ showView('staff'); });
 document.getElementById('lgPaper').addEventListener('click', lgPaper);
-document.getElementById('lgFix').addEventListener('click', lgFreeze);
+document.getElementById('lgFix').addEventListener('click', function(){ lgFreeze(); });
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
 
@@ -3665,6 +3743,11 @@ document.getElementById('lgBody').addEventListener('input', lgOnEdit_);
 document.getElementById('lgBody').addEventListener('change', lgOnEdit_);
 
 document.getElementById('lgBody').addEventListener('click', function(ev){
+  // 週の見出しの［確定］
+  var fx = ev.target;
+  while (fx && fx !== this && !fx.getAttribute('data-fix')) fx = fx.parentNode;
+  if (fx && fx !== this){ lgFreeze(fx.getAttribute('data-fix')); return; }
+
   var b = ev.target;
   while (b && b !== this && !b.getAttribute('data-act')) b = b.parentNode;
   if (!b || b === this) return;
@@ -3740,33 +3823,70 @@ var MOCK = (function(){
     }
     return h;
   }
-  function freezeState(month){
-    var mStart = month + '-01', mEnd = monthEndOf(month);
-    var stat = { month:month, start:mStart, end:mEnd,
+  function weekStartOf(iso){
+    var p = String(iso).split('-');
+    var d = new Date(+p[0], +p[1]-1, +p[2]);
+    d.setDate(d.getDate() - ((d.getDay() - 6 + 7) % 7));
+    return isoOf(d);
+  }
+  function isoOf(d){
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0')
+         + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  function weekMonthOf(w){ return addDays(w, 3).slice(0, 7); }
+  function weekLabelOf(w){
+    var e = addDays(w, 6);
+    return w.replace(/-/g,'/') + '〜'
+      + (w.slice(0,4) === e.slice(0,4) ? (+e.slice(5,7)) + '/' + (+e.slice(8)) : e.replace(/-/g,'/'));
+  }
+  function fixOfWeek(w){
+    return fixes.filter(function(x){ return x.week === w; })
+                .sort(function(a,b){ return b.version - a.version; });
+  }
+
+  /* 週ひとつの確定の状態。サーバーの freezeCheck_ と同じ形で返す */
+  function freezeState(anyDay){
+    var w = weekStartOf(anyDay), e = addDays(w, 6);
+    var stat = { week:w, start:w, end:e, month:weekMonthOf(w),
                  days:0, filled:0, approved:0, missing:0 };
-    for (var d = mStart; d <= mEnd; d = addDays(d, 1)){
+    for (var i = 0; i < 7; i++){
+      var r = store[addDays(w, i)];
       stat.days++;
-      var r = store[d];
       if (!r || r.state === 'editing' || r.state === 'empty'){ stat.missing++; continue; }
       stat.filled++;
       if (r.state === 'approved') stat.approved++;
     }
-    var vers = fixOfMock(month);
+    var vers = fixOfWeek(w);
     var live = vers.filter(function(x){ return x.alive; });
     var reasons = [];
-    // 最終日当日は確定できる（営業終了時に締めるため）
-    if (mEnd > todayIso){
-      var e = mEnd.split('-');
-      reasons.push('確定できるのは最終日(' + (+e[1]) + '/' + (+e[2]) + ')からです');
-    }
+    if (e > todayIso) reasons.push('確定できるのは ' + (+e.slice(5,7)) + '/' + (+e.slice(8)) + ' からです');
     if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
     var un = stat.filled - stat.approved;
     if (un) reasons.push('未承認が ' + un + ' 日あります');
     return {
-      month: month, stat: stat, unapproved: un, versions: vers,
+      week: w, label: weekLabelOf(w), month: stat.month,
+      stat: stat, unapproved: un, versions: vers,
       latest: live.length ? live[0] : null, frozen: !!live.length,
       nextVersion: vers.reduce(function(m,x){ return Math.max(m, x.version); }, 0) + 1,
       ok: !reasons.length, reasons: reasons
+    };
+  }
+
+  /* 月ぜんたいの見出し（確定そのものは週ごと） */
+  function monthFreeze(weeks){
+    var ready = weeks.filter(function(w){ return !w.freeze.frozen && w.freeze.ok; });
+    var wait  = weeks.filter(function(w){ return !w.freeze.frozen && !w.freeze.ok; });
+    var done  = weeks.filter(function(w){ return w.freeze.frozen; });
+    return {
+      total: weeks.length, frozen: done.length,
+      ready: ready.length, waiting: wait.length,
+      readyWeeks: ready.map(function(w){
+        return { week:w.start, label:w.label, nextVersion:w.freeze.nextVersion }; }),
+      frozenWeeks: done.map(function(w){
+        return { week:w.start, label:w.label, version:w.freeze.latest.version,
+                 nextVersion:w.freeze.nextVersion }; }),
+      waitingWeeks: wait.slice(0,3).map(function(w){
+        return { week:w.start, label:w.label, reasons:w.freeze.reasons }; })
     };
   }
 
@@ -3792,6 +3912,23 @@ var MOCK = (function(){
 
   var store = {};
   var job = null;
+
+  /* 1週ぶんの確定を始める（サーバーの startFreeze と同じ形） */
+  function startWeek(w, note, actor){
+    var f = freezeState(w);
+    if (!f.ok) throw new Error('この週はまだ確定できません：' + f.reasons.join('／'));
+    if (f.frozen && !String(note || '').trim()){
+      throw new Error('すでに第' + f.latest.version + '版があります。作り直す理由を書いてください');
+    }
+    return {
+      kind:'freeze', week:w, label:weekLabelOf(w), month:weekMonthOf(w),
+      version:f.nextVersion, note:String(note || ''), actor:actor,
+      from:w, to:addDays(w, 6),
+      title: w + '_業務日報_v' + f.nextVersion,
+      weeks:[w], done:0, startedAt:new Date().toISOString(),
+      state:'running', pdfUrl:''
+    };
+  }
 
   function names(){ return staff.filter(function(s){ return s.active; }); }
   function chiefOn(date){
@@ -4019,7 +4156,8 @@ var MOCK = (function(){
           }
           return r;
         });
-        weeks.push({ start:w, end: addDays(w, 6), rows: rows });
+        weeks.push({ start:w, end: addDays(w, 6), label: weekLabelOf(w),
+                     rows: rows, freeze: freezeState(w) });
         w = addDays(w, 7);
       }
 
@@ -4035,7 +4173,7 @@ var MOCK = (function(){
         ranges:{ ROOM_TEMP:[1,30], ROOM_HUMID:[30,70], COLD_TEMP:[2,8], COLD_HUMID:null },
         layout: LAYOUT, hasTemplate: true, seals: seals,
         weeks: weeks, stat: stat, alerts: alerts,
-        freeze: freezeState(mStart.slice(0,7))
+        freeze: monthFreeze(weeks)
       };
     },
 
@@ -4142,15 +4280,30 @@ var MOCK = (function(){
         if (job.kind === 'freeze'){
           fixes.push({
             id: 'f' + (fixes.length + 1),
-            month: job.month, version: job.version,
+            week: job.week, label: weekLabelOf(job.week),
+            month: weekMonthOf(job.week), version: job.version,
             at: todayIso.replace(/-/g,'/') + ' 12:00',
             by: job.actor || '',
-            name: job.month + '_業務日報_v' + job.version
+            name: job.week + '_業務日報_v' + job.version
                 + '_確定' + todayIso.replace(/-/g,'') + '.pdf',
             fileId: 'demo', url: job.pdfUrl, alive: true, note: job.note || '',
-            hash: fakeHash(job.month + 'v' + job.version),
-            chain: fakeHash('chain' + job.month + 'v' + job.version)
+            hash: fakeHash(job.week + 'v' + job.version),
+            chain: fakeHash('chain' + job.week + 'v' + job.version)
           });
+          // 待っている週があれば、続けて焼く
+          var frozen = (job.frozen || []).concat([{ week:job.week,
+            label:weekLabelOf(job.week), version:job.version, url:job.pdfUrl }]);
+          var q = (job.queue || []).slice();
+          while (q.length){
+            var w = q.shift();
+            var chk = freezeState(w);
+            if (chk.frozen || !chk.ok) continue;
+            var next = startWeek(w, job.note || '', job.actor);
+            next.queue = q; next.frozen = frozen; next.pages = job.pages;
+            job = next;
+            return job;
+          }
+          job.frozen = frozen; job.queue = [];
         }
       }
       return job;
@@ -4169,71 +4322,78 @@ var MOCK = (function(){
       return true;
     },
 
-    getFreezeState: function(month){ return freezeState(String(month).slice(0,7)); },
+    getFreezeState: function(week){ return freezeState(week || todayIso); },
 
-    startFreeze: function(p){
-      var f = freezeState(String(p.month).slice(0,7));
-      if (!f.ok) throw new Error('この月はまだ確定できません：' + f.reasons.join('／'));
-      var note = String(p.note || '').trim();
-      if (f.frozen && !note){
-        throw new Error('すでに第' + f.latest.version
-          + '版があります。作り直す理由を書いてください');
-      }
-      var weeks = [], a = new Date(f.stat.start), b = new Date(f.stat.end);
-      while (a <= b){ weeks.push(a.toISOString().slice(0,10)); a.setDate(a.getDate() + 7); }
-      job = {
-        kind:'freeze', month:f.month, version:f.nextVersion, note:note, actor:p.actor,
-        from:f.stat.start, to:f.stat.end,
-        title: f.month + '_業務日報_v' + f.nextVersion,
-        weeks:weeks, done:0, startedAt:new Date().toISOString(),
-        state:'running', pdfUrl:''
-      };
+    /* 選ばれた週を、順に確定していく */
+    freezeWeeks: function(p){
+      var list = (p.weeks || []).map(weekStartOf).sort();
+      if (!list.length) throw new Error('確定する週が選ばれていません');
+      job = startWeek(list[0], String(p.note || ''), p.actor);
+      job.queue = list.slice(1);
+      job.frozen = [];
+      job.pages = list.length;
       return job;
     },
 
     getFixList: function(){
       var byMonth = {};
       fixes.slice().sort(function(a,b){
-        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
+        if (a.week !== b.week) return a.week < b.week ? 1 : -1;
         return b.version - a.version;
       }).forEach(function(x){ (byMonth[x.month] = byMonth[x.month] || []).push(x); });
+
       var months = Object.keys(byMonth).sort().reverse().map(function(m){
-        var live = byMonth[m].filter(function(x){ return x.alive; });
+        var byWeek = {};
+        byMonth[m].forEach(function(x){ (byWeek[x.week] = byWeek[x.week] || []).push(x); });
+        var weeks = Object.keys(byWeek).sort().reverse().map(function(w){
+          var live = byWeek[w].filter(function(x){ return x.alive; });
+          return { week:w, label:weekLabelOf(w), versions:byWeek[w],
+                   latest: live.length ? live[0] : null };
+        });
         return { month:m, label: m.slice(0,4) + '年' + Number(m.slice(5,7)) + '月',
-                 versions: byMonth[m], latest: live.length ? live[0] : null };
+                 weeks: weeks,
+                 alive: weeks.filter(function(w){ return w.latest; }).length,
+                 total: weeks.length };
       });
-      return { store:'くるむ薬局 札幌店', today: todayIso, months: months };
+      var newest = months.length ? months[0].month : todayIso.slice(0,7);
+      var mp = newest.split('-');
+      return { store:'くるむ薬局 札幌店', today: todayIso, months: months,
+               range: { from: newest + '-01',
+                        to: isoOf(new Date(+mp[0], +mp[1], 0)) } };
     },
 
     verifyFixes: function(){
       return {
         total: fixes.length, bad: 0, at: stamp(),
         items: fixes.map(function(x){
-          return { month:x.month, version:x.version, name:x.name,
+          return { week:x.week, label:x.label, version:x.version, name:x.name,
                    alive:x.alive, state:'ok', detail:'' };
         })
       };
     },
 
     bundleFixes: function(p){
-      var seen = {}, picked = [];
-      fixes.slice().sort(function(a,b){
-        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
-        return b.version - a.version;
-      }).forEach(function(x){
-        if (!x.alive || x.month < p.from || x.month > p.to) return;
-        if (seen[x.month]) return;
-        seen[x.month] = true;
-        picked.push(x);
-      });
-      if (!picked.length) throw new Error('この期間に確定済みの月がありません');
-      picked.sort(function(a,b){ return a.month < b.month ? -1 : 1; });
+      var ymd = /^\d{4}-\d{2}-\d{2}$/;
+      if (!ymd.test(String(p.from)) || !ymd.test(String(p.to))){
+        throw new Error('期間が正しくありません（日付で指定してください）');
+      }
+      if (p.from > p.to) throw new Error('開始日が終了日より後になっています');
+      var picked = [], missing = [];
+      var w = weekStartOf(p.from), last = weekStartOf(p.to);
+      while (w <= last){
+        var hit = fixOfWeek(w).filter(function(x){ return x.alive; })[0];
+        if (hit) picked.push(hit); else missing.push(weekLabelOf(w));
+        w = addDays(w, 7);
+      }
+      if (!picked.length) throw new Error('この期間に確定済みの週がありません');
       var name = p.from + '_' + p.to + '_業務日報_'
         + todayIso.replace(/-/g,'') + '.zip';
       return {
-        name: name, url: 'https://drive/' + name, months: picked.length,
+        name: name, url: 'https://drive/' + name, weeks: picked.length,
+        missing: missing,
         items: picked.map(function(x){
-          return { month:x.month, version:x.version, name:x.name, hash:x.hash };
+          return { week:x.week, label:x.label, version:x.version,
+                   name:x.name, hash:x.hash };
         })
       };
     },
