@@ -68,7 +68,7 @@ const CFG = {
 
   /** この Code.gs の版。貼り替えたときに version() で確かめられます。
    *  スプレッドシート側に貼った版が古いと、新しい関数が見つかりません */
-  VERSION: '2026-08-31',
+  VERSION: '2026-08-31.2',
 
   /** 店舗。多店舗化したときはコードで日報DBを分けます */
   STORE_CODE: 'SPK',
@@ -1187,6 +1187,164 @@ function unapproveDay_(p) {
   return weekPayload_(iso);
 }
 
+/* ------------------------------------------------------------
+ *  一括承認(週まるごと・月まるごと)
+ *
+ *  日ごとに押していくと、月末には30回近く押すことになります。
+ *  ただ「まとめて押せる」だけにすると中身を見ずに通せてしまうので、
+ *    ・押せる日だけを対象にする(記録があり・未承認で・今日まで)
+ *    ・対象から外した日は理由を付けて返す
+ *    ・何日ぶんを、どの期間で押したかを変更履歴に1行残す
+ *  という形にしています。
+ *
+ *  中身(基準を外れた記録・管理に関する事項・譲渡記録)を押す前に示すのは
+ *  画面側の役目です。記録簿はその一覧をすでに出しているので、
+ *  「見てから押す」流れがそのまま使えます。
+ * ---------------------------------------------------------- */
+
+/** 一括承認で一度に扱える日数の上限。月まるごと(31日)+週の食み出しぶん */
+const APPROVE_RANGE_MAX = 45;
+
+/**
+ * fromIso 〜 toIso のうち、承認できる日をまとめて承認します。
+ *
+ * 戻り値
+ *   { from, to, label, done, dates[], skipped[{date, why}], proxy[{date, chief}] }
+ *
+ * 承認できるのは、その日の管理薬剤師か、現任の管理薬剤師(代行)です。
+ * 日ごとの approveDay_ と同じ条件で、条件は日ごとに見ます。
+ */
+function approveRange_(fromIso, toIso, who) {
+  const from = fmt_(fromIso);
+  const to   = fmt_(toIso);
+  if (!from || !to) throw new Error('期間が正しくありません');
+  if (from > to) throw new Error('期間の順序が逆です');
+  if (!who) throw new Error('承認者が特定できません');
+
+  const today = today_();
+  const terms = termList_();
+  const nowChief = chiefOn_(today, terms);
+
+  // 期間に出てくる管理薬剤師を先に見ます。
+  // まったく管理薬剤師でない人に、日ごとの理由を31行返しても仕方がないので
+  // その場合はここで止めます(日ごとの承認と同じ言い方にそろえます)。
+  const chiefs = [];
+  let span = 0;
+  for (let iso = from; iso <= to; iso = addDays_(iso, 1)) {
+    if (++span > APPROVE_RANGE_MAX) {
+      throw new Error('一度に承認できるのは ' + APPROVE_RANGE_MAX + ' 日ぶんまでです');
+    }
+    const c = chiefOn_(iso, terms);
+    if (c && chiefs.indexOf(c) < 0) chiefs.push(c);
+  }
+  if (who !== nowChief && chiefs.indexOf(who) < 0) {
+    throw new Error('承認できるのは管理薬剤師だけです');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const idx = dailyIndex_();
+    const cAdmin = idx.t.header.indexOf('管理者');
+    const cAt    = idx.t.header.indexOf('承認日時');
+    const cState = idx.t.header.indexOf('状態');
+    if (cAdmin < 0 || cAt < 0 || cState < 0) {
+      throw new Error('日報DBに承認の列がありません。updateDatabase を実行してください');
+    }
+
+    const targets = [], skipped = [], proxy = [];
+
+    for (let iso = from; iso <= to; iso = addDays_(iso, 1)) {
+      const row = idx.map[iso];
+      const d = toDay_(iso, row, terms);
+
+      if (iso > today)              { skipped.push({ date: iso, why: 'まだ来ていない日' }); continue; }
+      if (d.state === 'empty')      { skipped.push({ date: iso, why: '記録がありません' }); continue; }
+      if (d.state === 'editing')    { skipped.push({ date: iso, why: (d.lockedBy || '誰か') + ' さんが入力中です' }); continue; }
+      if (d.state === 'approved')   { skipped.push({ date: iso, why: 'すでに承認済み' }); continue; }
+
+      // ここまで来れば「入力済」。承認できる人かどうかは日ごとに見ます
+      if (who !== d.chief && who !== nowChief) {
+        skipped.push({ date: iso, why: '当日の管理薬剤師（' + (d.chief || '—') + '）ではありません' });
+        continue;
+      }
+      if (d.chief && who !== d.chief) proxy.push({ date: iso, chief: d.chief });
+      targets.push({ date: iso, row: row._row });
+    }
+
+    if (targets.length) {
+      writeApprovals_(idx.t, targets, cAdmin, cAt, cState, who, new Date());
+      audit_('日報を一括承認', approveAuditText_(from, to, targets, proxy), who);
+    }
+
+    return {
+      from: from, to: to, label: rangeLabel_(from, to),
+      done: targets.length,
+      dates: targets.map(function (x) { return x.date; }),
+      skipped: skipped,
+      proxy: proxy
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * 承認の3列(管理者・承認日時・状態)を、続いている行のまとまりごとに1回で書きます。
+ *
+ * 日ごとに writeRow_ を呼ぶと31日で31往復になり、
+ * 行が離れていなければ、ふつうは読み書き1回ずつで済みます。
+ * 書くのは対象の行だけで、間の行には触れません。
+ */
+function writeApprovals_(t, targets, cAdmin, cAt, cState, who, at) {
+  const c0 = Math.min(cAdmin, cAt, cState);
+  const c1 = Math.max(cAdmin, cAt, cState);
+  const width = c1 - c0 + 1;
+
+  const rows = targets.map(function (x) { return x.row; })
+                      .sort(function (a, b) { return a - b; });
+
+  let i = 0;
+  while (i < rows.length) {
+    let j = i;
+    while (j + 1 < rows.length && rows[j + 1] === rows[j] + 1) j++;   // 続きぶんはまとめる
+
+    const top = rows[i];
+    const n = rows[j] - top + 1;
+    const rng = t.sh.getRange(top, c0 + 1, n, width);
+    const vals = rng.getValues();
+    for (let k = 0; k < n; k++) {
+      vals[k][cAdmin - c0] = who;
+      vals[k][cAt - c0]    = at;
+      vals[k][cState - c0] = '承認済';
+    }
+    rng.setValues(vals);
+    i = j + 1;
+  }
+}
+
+/** 変更履歴に残す文。あとから「どの日を押したのか」を追えるように日付を並べます */
+function approveAuditText_(from, to, targets, proxy) {
+  const md = function (iso) { return iso.slice(5).replace('-', '/'); };
+  let s = rangeLabel_(from, to) + '：' + targets.length + ' 日を承認（'
+        + targets.map(function (x) { return md(x.date); }).join('、') + '）';
+  if (proxy.length) {
+    s += '／うち代行 ' + proxy.length + ' 日：'
+       + proxy.map(function (x) {
+           return md(x.date) + '（当日の管理薬剤師 ' + x.chief + '）';
+         }).join('、');
+  }
+  return s;
+}
+
+/** 期間の言い方。月まるごとなら「2026年8月」、それ以外は日付で並べます */
+function rangeLabel_(from, to) {
+  if (from === monthStart_(from) && to === monthEnd_(from)) {
+    return from.slice(0, 4) + '年' + Number(from.slice(5, 7)) + '月';
+  }
+  return from.replace(/-/g, '/') + '〜' + to.replace(/-/g, '/');
+}
+
 /* ---------- 入力中の表示 ---------- */
 
 function claimDay_(p) {
@@ -1276,6 +1434,25 @@ function approveDay(p) { return guard_('approveDay', function () {
 
 function unapproveDay(p) { return guard_('unapproveDay', function () {
   return unapproveDay_(p);
+}); }
+
+/**
+ * 一括承認。週まるごと・月まるごとのどちらもここを通ります。
+ *
+ *   p.from / p.to  対象の期間(この日を含む)
+ *   p.admin        承認する人
+ *   p.view         'ledger' なら記録簿の画面データ、それ以外は週の画面データを返す
+ *   p.anchor       画面を描き直すときの基準日(省略時は p.from)
+ *                  週が月をまたぐので、記録簿は「いま開いている月」を渡してください
+ *
+ * 戻り値は approveRange_ の結果に data(画面データ)を足したものです。
+ * 押した結果(何日・何をとばしたか)を画面で必ず出せるようにしています。
+ */
+function approveRange(p) { return guard_('approveRange', function () {
+  const r = approveRange_(p.from, p.to, String(p.admin || '').trim());
+  const anchor = p.anchor || p.from;
+  r.data = (p.view === 'ledger') ? ledgerPayload_(anchor) : weekPayload_(anchor);
+  return r;
 }); }
 
 function claimDay(p) { return guard_('claimDay', function () {

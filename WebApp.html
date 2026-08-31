@@ -256,6 +256,13 @@ button,input,select{font:inherit;color:inherit}
   font-size:11.5px;color:var(--ink-2);
 }
 
+/* ---- 一括承認(週まるごと) ---- */
+.bulkbar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:10px 16px;border-top:1px solid var(--line);
+}
+.bulkbar .note{font-size:11.5px;color:var(--muted)}
+
 /* ---- 入力もれ ---- */
 .card-bd.tight{padding:12px 16px 14px}
 .missrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -833,6 +840,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 }
 .lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
 .lg-week > h3 .pg.right{margin-left:auto}
+.lg-week > h3 .wkappr{align-self:center;margin-left:8px}
 
 /* 帳票は幅が決まっている(いまは1031px)。枠を画面いっぱいに広げると
    右側に大きな余白ができるので、中身に合わせて中央に置く */
@@ -1062,6 +1070,12 @@ table.pv td.st i.pend{
         </div>
 
         <div class="week" id="week"></div>
+
+        <!-- 週まるごとの承認。管理薬剤師が、この週の未承認をまとめて押せます -->
+        <div class="bulkbar" id="wkBulk" hidden>
+          <button class="btn ghost sm" id="wkApproveAll">この週をまとめて承認</button>
+          <span class="note" id="wkBulkNote"></span>
+        </div>
       </div>
 
       <!-- 入力もれ -->
@@ -1149,6 +1163,8 @@ table.pv td.st i.pend{
     <span class="lg-dirtycnt" id="lgDirty"></span>
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
+    <button class="btn ghost" id="lgApprAll" hidden
+      title="この月の未承認をまとめて承認します">未承認をまとめて承認</button>
     <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
     <button class="btn primary" id="lgFix"
       title="月が締まったらPDFに焼いて残します（月に1回）">この月を確定</button>
@@ -1457,6 +1473,8 @@ function renderIdentity(){
     S.me = sel.value;
     if (S.me) clearNeedStaff();
     renderForm();
+    wkBulkBar_();                      // 誰として押すかで、まとめて承認できる日が変わる
+    if (LG.data) lgRender();           // 記録簿を開いていれば、そちらのボタンも出し入れする
     formRestore_(keep);
     // 名前が決まってから「入力中」を立てる(空欄のまま他人をロックしないため)
     if (S.me && S.dirty) claimOnce_();
@@ -1583,6 +1601,23 @@ function renderWeek(){
   Array.prototype.forEach.call(document.querySelectorAll('.day'), function(el){
     el.addEventListener('click', function(){ selectDay(el.getAttribute('data-date')); });
   });
+
+  wkBulkBar_();
+}
+
+/* 週まるごとの承認バー。押せる日がないときは出しません。
+   誰として押すかで中身が変わるので、名前を選び直したときにも呼びます */
+function wkBulkBar_(){
+  var w = S.week;
+  if (!w) return;
+  var plan = apprPlan_(w.days, w.today);
+  var bulk = document.getElementById('wkBulk');
+  var ball = document.getElementById('wkApproveAll');
+  bulk.hidden = !plan.targets.length;
+  ball.disabled = false;
+  ball.textContent = 'この週の ' + plan.targets.length + ' 日をまとめて承認';
+  document.getElementById('wkBulkNote').textContent =
+    plan.blocked.length ? (plan.blocked.length + ' 日は対象外（未記録・入力中）') : '';
 }
 
 function valSummary(d, future){
@@ -2033,6 +2068,131 @@ document.getElementById('btnApprove').addEventListener('click', function(){
   });
 });
 
+
+/* ---------- 一括承認(週まるごと・月まるごと) ----------
+   日ごとに押すと月末には30回近くになります。まとめて押せるようにしますが、
+   「中身を見ずに通す」ことにならないよう、押す前に必ず
+     ・何日ぶんか
+     ・基準を外れた記録がある日
+     ・管理に関する事項が書かれている日／譲渡・譲受記録の件数
+     ・代行での承認になる日
+   を出してから確認をとります。対象にできない日も理由を付けて出します。 */
+
+/* その日が基準を外れているか。記録簿はサーバーが数えたものを持っているので、
+   それがあればそのまま使い、入力画面では FIELDS の基準から数えます */
+function apprOut_(d){
+  if (d.alerts) return d.alerts;
+  return FIELDS.filter(function(f){
+    return f.range && d[f.key] !== null && d[f.key] !== undefined
+        && (d[f.key] < f.range[0] || d[f.key] > f.range[1]);
+  }).map(function(f){
+    return { label:f.label, value:d[f.key], min:f.range[0], max:f.range[1] };
+  });
+}
+
+/* 押す前の下ごしらえ。サーバーも同じ条件で見直すので、ここは画面に出すためのものです */
+function apprPlan_(days, today){
+  var p = { targets:[], blocked:[], alerts:[], notes:0, xfers:0, proxy:[], chiefs:[] };
+  (days || []).forEach(function(d){
+    if (!d || !d.date) return;
+    if (today && d.date > today) return;              // まだ来ていない日は黙って外す
+    if (d.state === 'approved') return;               // もう押してある
+    if (d.state === 'empty'){   p.blocked.push({ date:d.date, why:'未記録' }); return; }
+    if (d.state === 'editing'){ p.blocked.push({ date:d.date, why:(d.lockedBy || '誰か') + ' さんが入力中' }); return; }
+    if (!canApprove(d.date)){   p.blocked.push({ date:d.date, why:'管理薬剤師ではありません' }); return; }
+
+    p.targets.push(d.date);
+
+    var chief = d.chief || adminOn(d.date);
+    if (chief && S.me !== chief){
+      p.proxy.push({ date:d.date, chief:chief });
+      if (p.chiefs.indexOf(chief) < 0) p.chiefs.push(chief);
+    }
+    var out = apprOut_(d);
+    if (out.length) p.alerts.push({ date:d.date, items:out });
+    if (d.note) p.notes++;
+    if (d.xfers && d.xfers.length) p.xfers += d.xfers.length;
+  });
+  return p;
+}
+
+function apprMd_(iso){ return iso.slice(5).replace('-', '/'); }
+
+/* 確認の文。ここが「見てから押す」の担保なので、数だけでなく日付も出します */
+function apprText_(plan, label){
+  var t = label + ' のうち、まだ承認していない ' + plan.targets.length + ' 日をまとめて承認します。\n\n';
+
+  if (plan.alerts.length){
+    t += '　基準を外れた記録　' + plan.alerts.length + ' 日'
+       + '（' + plan.alerts.map(function(a){ return apprMd_(a.date); }).join('、') + '）\n';
+  }
+  if (plan.notes) t += '　管理に関する事項　' + plan.notes + ' 日\n';
+  if (plan.xfers) t += '　譲渡・譲受記録　　' + plan.xfers + ' 件\n';
+  if (plan.proxy.length){
+    t += '　代行での承認　　　' + plan.proxy.length + ' 日'
+       + '（当日の管理薬剤師 ' + plan.chiefs.join('、') + '）\n';
+  }
+  if (!plan.alerts.length && !plan.notes && !plan.xfers && !plan.proxy.length){
+    t += '　特記事項はありません\n';
+  }
+
+  if (plan.blocked.length){
+    t += '\nつぎの ' + plan.blocked.length + ' 日は対象外です。\n'
+       + plan.blocked.slice(0, 10).map(function(b){
+           return '　' + apprMd_(b.date) + '　' + b.why;
+         }).join('\n') + '\n'
+       + (plan.blocked.length > 10 ? '　…ほか ' + (plan.blocked.length - 10) + ' 日\n' : '');
+  }
+
+  t += '\n承認すると管理者印が入り、変更履歴に「一括承認」として残ります。\n'
+     + '中身を確かめてから進めてください。\n\nよろしいですか？';
+  return t;
+}
+
+/* o = { from, to, label, view, anchor, days, today, busy(on), after(r) } */
+function apprRun_(o){
+  if (!S.me){ needStaff(true); toast('担当者を選んでください', true); return; }
+
+  var plan = apprPlan_(o.days, o.today);
+  if (!plan.targets.length){
+    toast(plan.blocked.length ? '承認できる日がありません' : 'すべて承認済みです', !!plan.blocked.length);
+    return;
+  }
+  if (!confirm(apprText_(plan, o.label))) return;
+
+  o.busy(true);
+  call('approveRange',
+    [{ from:o.from, to:o.to, admin:S.me, view:o.view, anchor:o.anchor }],
+    function(r){
+      o.busy(false);
+      o.after(r);
+      // とばした日のうち、もともと対象外だったもの(承認済み・未来)は数えません
+      var left = (r.skipped || []).filter(function(x){
+        return x.why !== 'すでに承認済み' && x.why !== 'まだ来ていない日';
+      });
+      toast(r.done + ' 日を承認しました'
+        + (left.length ? '（' + left.length + ' 日はとばしました）' : ''));
+    },
+    function(e){ o.busy(false); fail(e); });
+}
+
+/* 入力画面。いま見ている週をまとめて承認します */
+function wkApproveAll(){
+  var w = S.week;
+  if (!w) return;
+  var btn = document.getElementById('wkApproveAll');
+  apprRun_({
+    from: w.days[0].date,
+    to:   w.days[6].date,
+    label: w.days[0].date.replace(/-/g, '/') + '〜' + w.days[6].date.slice(5).replace('-', '/') + ' の週',
+    view: 'input',
+    anchor: (S.sel && S.sel <= w.today) ? S.sel : w.days[0].date,
+    days: w.days,
+    today: w.today,
+    busy: function(on){ btn.disabled = on; if (on) btn.textContent = '承認中…'; },
+    after: function(r){ apply(r.data); }
+  });
+}
 /* ---------- 週の移動ボタン ---------- */
 document.getElementById('wkPrev').addEventListener('click', function(){
   gotoWeek(addDays(S.week.days[0].date, -7));
@@ -3271,6 +3431,79 @@ function lgUnapprove(date){
   }, function(e){ LG.busy = false; fail(e); });
 }
 
+
+/* ---------- 記録簿からの一括承認 ----------
+   記録簿は1か月ぶんを帳票の書式のまま出しているので、
+   「画面で確かめてから、まとめて押す」がそのまま成り立ちます。
+   書きかけの行があるときは、古い値のまま押してしまわないよう先に止めます。 */
+
+function lgDirtyIn_(from, to){
+  return Object.keys(LG.dirty).filter(function(d){ return d >= from && d <= to; });
+}
+
+function lgApprRun_(from, to, label, days, btn){
+  if (LG.busy) return;
+
+  var pend = lgDirtyIn_(from, to);
+  if (pend.length){
+    toast(pend.length + ' 行が未保存です。先に保存してから承認してください', true);
+    return;
+  }
+
+  apprRun_({
+    from: from, to: to, label: label,
+    view: 'ledger', anchor: LG.data.monthStart,
+    days: days, today: LG.data.today,
+    busy: function(on){
+      LG.busy = on;
+      if (btn) btn.disabled = on;
+    },
+    after: function(r){ LG.data = r.data; lgRender(); }
+  });
+}
+
+/* 印刷1ページぶん(7日)をまとめて承認します。月をまたぐ週は、その週まるごとが対象です */
+function lgApprWeek(i, btn){
+  var w = LG.data && LG.data.weeks[i];
+  if (!w) return;
+  lgApprRun_(w.start, w.end,
+    w.start.replace(/-/g, '/') + '〜' + w.end.slice(5).replace('-', '/') + ' の週',
+    w.rows, btn);
+}
+
+/* いま開いている月をまとめて承認します。週の食み出しぶんは含めません */
+function lgApprMonth(){
+  var d = LG.data;
+  if (!d) return;
+  var days = [];
+  d.weeks.forEach(function(w){
+    w.rows.forEach(function(r){ if (r.inMonth) days.push(r); });
+  });
+  lgApprRun_(d.monthStart, d.monthEnd, d.monthLabel, days,
+             document.getElementById('lgApprAll'));
+}
+
+/* トップバーの「未承認をまとめて承認」。押せる日が無ければ出しません */
+function lgApprBtn_(d){
+  var btn = document.getElementById('lgApprAll');
+  var days = [];
+  d.weeks.forEach(function(w){
+    w.rows.forEach(function(r){ if (r.inMonth) days.push(r); });
+  });
+  var n = apprPlan_(days, d.today).targets.length;
+  btn.hidden = !n;
+  btn.disabled = false;
+  btn.textContent = '未承認の ' + n + ' 日を承認';
+}
+
+/* 週(印刷1ページ)ごとの承認ボタン。見出しの中にあるので紙には出ません */
+function lgWkApprBtn_(w, i){
+  var n = apprPlan_(w.rows, LG.data.today).targets.length;
+  if (!n) return '';
+  return '<button class="btn ghost sm wkappr" data-act="apprweek" data-w="' + i + '">'
+       + 'この週の ' + n + ' 日を承認</button>';
+}
+
 function lgOpenXfer(date){
   var r = lgRow(date);
   if (!r) return;
@@ -3535,9 +3768,14 @@ function lgFixBox_(d){
   }
 
   box.classList.add('wait');
+  // 未承認で止まっているなら、まとめて押せることをその場で伝える
+  var ab = document.getElementById('lgApprAll');
   box.innerHTML = '<span class="ic">…</span><div class="bd">'
     + '<b>まだ確定できません</b>'
     + '<ul>' + f.reasons.map(function(r){ return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>'
+    + (ab.hidden ? ''
+        : '上の［' + esc(ab.textContent) + '］でまとめて押せます。'
+          + '押す前に、この画面で中身を確かめてください。')
     + '</div>';
   btn.disabled = true;
   btn.textContent = 'この月を確定';
@@ -3590,6 +3828,7 @@ function lgRender(){
         }).join('')
     : '';
 
+  lgApprBtn_(d);
   lgFixBox_(d);
 
   if (!d.hasTemplate){
@@ -3605,6 +3844,7 @@ function lgRender(){
         +   '<span class="pg">' + w.start.replace(/-/g, '/') + ' 〜 '
         +     w.end.slice(5).replace('-', '/') + '</span>'
         +   '<span class="pg right">印刷 ' + (i + 1) + ' / ' + d.weeks.length + ' ページ</span>'
+        + lgWkApprBtn_(w, i)
         + '</h3>'
         + '<div class="lg-sheet">' + lgTable_(w) + '</div>'
         + '</section>';
@@ -3620,6 +3860,9 @@ function lgRender(){
     + 'が締まったら、その時点のPDFに焼いてドライブに残します。'
     + '月に1回の作業です。あとから印影やテンプレートを直しても、'
     + '確定したPDFは変わりません。<br>'
+    + '<b style="display:inline">まとめて承認</b>… 上の［未承認の◯日を承認］でこの月ぶんを、'
+    + '週の見出しの［この週の◯日を承認］で印刷1ページぶんをまとめて押せます。'
+    + '押した日付は変更履歴に残ります。<br>'
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
@@ -3633,6 +3876,8 @@ document.getElementById('navExport').addEventListener('click', function(){ showV
 document.getElementById('btnAdmin').addEventListener('click', function(){ showView('staff'); });
 document.getElementById('lgPaper').addEventListener('click', lgPaper);
 document.getElementById('lgFix').addEventListener('click', lgFreeze);
+document.getElementById('lgApprAll').addEventListener('click', lgApprMonth);
+document.getElementById('wkApproveAll').addEventListener('click', wkApproveAll);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
 
@@ -3674,6 +3919,7 @@ document.getElementById('lgBody').addEventListener('click', function(ev){
   else if (act === 'undo')    lgUndo(date);
   else if (act === 'approve') lgApprove(date);
   else if (act === 'unapprove') lgUnapprove(date);
+  else if (act === 'apprweek') lgApprWeek(Number(b.getAttribute('data-w')), b);
   else if (act === 'xfer')    lgOpenXfer(date);
 });
 
@@ -4275,6 +4521,32 @@ var MOCK = (function(){
       r.state = 'approved'; r.admin = p.admin;
       r.approvedAt = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
       return week(p.date);
+    },
+
+    approveRange: function(p){
+      var out = { from:p.from, to:p.to, label:p.from + '〜' + p.to,
+                  done:0, dates:[], skipped:[], proxy:[] };
+      var now = new Date();
+      var hh = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      for (var d = p.from; d <= p.to; d = addDays(d, 1)){
+        var r = store[d];
+        if (d > todayIso){ out.skipped.push({ date:d, why:'まだ来ていない日' }); continue; }
+        if (!r || r.state === 'empty'){ out.skipped.push({ date:d, why:'記録がありません' }); continue; }
+        if (r.state === 'editing'){
+          out.skipped.push({ date:d, why:(r.lockedBy || '誰か') + ' さんが入力中です' }); continue;
+        }
+        if (r.state === 'approved'){ out.skipped.push({ date:d, why:'すでに承認済み' }); continue; }
+        r.state = 'approved'; r.admin = p.admin; r.approvedAt = hh;
+        out.dates.push(d); out.done++;
+      }
+      if (out.done){
+        push('日報を一括承認',
+             p.from + '〜' + p.to + '：' + out.done + ' 日を承認', p.admin);
+      }
+      out.data = (p.view === 'ledger')
+        ? MOCK.getLedger(p.anchor || p.from)
+        : week(p.anchor || p.from);
+      return out;
     },
 
     getStaffMaster: function(){ return master(); },
