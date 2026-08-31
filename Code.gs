@@ -72,7 +72,7 @@ const CFG = {
 
   /** この Code.gs の版。貼り替えたときに version() で確かめられます。
    *  スプレッドシート側に貼った版が古いと、新しい関数が見つかりません */
-  VERSION: '2026-08-31',
+  VERSION: '2026-09-01',
 
   /** 店舗。多店舗化したときはコードで日報DBを分けます */
   STORE_CODE: 'SPK',
@@ -2655,6 +2655,18 @@ function benchmarkExport(anchorIso) {
 
     renderWeekSheet_(temp, start, rows, seals, geo, b.sheet, b, timing);
     SpreadsheetApp.flush();
+
+    // 下ごしらえで何コマ押したか。ここから「1コマあたり何秒か」が出せます。
+    // 使い回しが効かない月では、この時間がそのまま毎週かかります
+    let baseStamps = 0;
+    rows.forEach(function (r) {
+      if (b.adminDone && seals[r.admin]) baseStamps++;
+      if (b.staffDone && seals[r.staff]) baseStamps++;
+    });
+    timing.setup = tSeals + tGeo + tCreate;   // 1回だけかかるもの
+    timing.base = tBase;                      // 下ごしらえ(押印そのもの)
+    timing.baseStamps = baseStamps;
+    timing.stampMs = baseStamps ? tBase / baseStamps : 0;
 
     const total = tSeals + tGeo + tCreate + tBase
       + (timing.copy || 0) + (timing.values || 0) + (timing.seals || 0);

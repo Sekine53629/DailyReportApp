@@ -56,6 +56,9 @@
  * ============================================================
  */
 
+/** この版の Code.gs が要ります。古いと途中で落ちるので、先に確かめます */
+const SEED_NEEDS = '2026-09-01';
+
 const SEED = Object.freeze({
   /** 対象の月 */
   MONTH: '2026-01',
@@ -110,6 +113,65 @@ function isSeedName_(n) {
   return String(n || '').indexOf(SEED.STAFF_PREFIX) === 0;
 }
 
+/** テスト用に足した任期かどうか。
+ *  「元の管理薬剤師に戻す」ための任期は本物の氏名で入るので、IDで見分けます */
+function isSeedTermId_(id) {
+  return String(id || '').indexOf('TSEED') === 0;
+}
+
+/**
+ * Code.gs が足りているかを、何も書く前に確かめる。
+ *
+ * 途中で落ちると、担当者と任期だけが残って中途半端な状態になります。
+ * 貼り替え忘れは実際に起きたので、ここで止めます。
+ */
+function seedPreflight_() {
+  const missing = [];
+  // typeof なら、宣言されていない名前でも例外になりません
+  const need = [
+    ['ensureRowRoom_()', typeof ensureRowRoom_],
+    ['monthEnd_()',      typeof monthEnd_],
+    ['weekStart_()',     typeof weekStart_],
+    ['weeksBetween_()',  typeof weeksBetween_],
+    ['freezeCheck_()',   typeof freezeCheck_],
+    ['startFreeze()',    typeof startFreeze],
+    ['runExportChunk()', typeof runExportChunk],
+    ['benchmarkExport()', typeof benchmarkExport]
+  ];
+  need.forEach(function (x) { if (x[1] !== 'function') missing.push(x[0]); });
+
+  // 引数を受け取れる版か(古い版は引数を黙って無視してしまう)
+  if (typeof benchmarkExport === 'function' && benchmarkExport.length < 1) {
+    missing.push('benchmarkExport(週) … 引数を受け取れる版');
+  }
+  if (typeof runExportChunk === 'function' && runExportChunk.length < 1) {
+    missing.push('runExportChunk(上限) … 引数を受け取れる版');
+  }
+  if (typeof CFG === 'undefined' || !CFG.NIGHTLY) missing.push('CFG.NIGHTLY');
+
+  if (!missing.length) return null;
+
+  const out = [];
+  out.push('★ 貼ってある Code.gs が古いため、実行できません。');
+  out.push('');
+  out.push('   いま貼ってある版 : '
+    + ((typeof CFG !== 'undefined' && CFG.VERSION) || '（不明）'));
+  out.push('   必要な版         : ' + SEED_NEEDS + ' 以降');
+  out.push('');
+  out.push('   見つからないもの:');
+  missing.forEach(function (m) { out.push('     ・' + m); });
+  out.push('');
+  out.push('   直し方');
+  out.push('     1. Code.gs を貼り替える');
+  out.push('     2. updateDatabase() を実行する');
+  out.push('     3. もう一度 seedWorstCaseMonth() を実行する');
+  out.push('');
+  out.push('   ここまでで何も書いていません。ブックはそのままです。');
+  const text = out.join('\n');
+  console.log(text);
+  return text;
+}
+
 /**
  * ★ 1. いちばん時間がかかる形の1か月を作ります。
  *
@@ -119,6 +181,10 @@ function isSeedName_(n) {
 function seedWorstCaseMonth() {
   const out = [];
   const say = function (l) { out.push(l); console.log(l); };
+
+  // 何かを書く前に、Code.gs が足りているかを確かめる
+  const stop = seedPreflight_();
+  if (stop) return stop;
 
   const days = seedDays_();
   const r = seedRange_();
@@ -172,13 +238,16 @@ function seedWorstCaseMonth() {
   say('   ' + names.join('、') + '（新規 ' + added + ' 名）');
 
   /* ---- 管理薬剤師の交代 ---- */
-  const chiefs = seedChiefs_(weeks, names);
+  const chiefs = seedChiefs_(weeks, names, r);
   say('');
   say('■ 管理薬剤師（' + SEED.CHIEF_CHANGES + '）');
-  chiefs.forEach(function (c) { say('   ' + c.from + ' 〜  ' + c.name); });
+  chiefs.forEach(function (c) {
+    say('   ' + c.from + ' 〜  ' + c.name + (c.restore ? '　← ここから元に戻ります' : ''));
+  });
   if (SEED.CHIEF_CHANGES === 'weekly') {
     say('   ※ 毎週交代は現実には起きません。押印の使い回しを封じるための設定です');
   }
+  say('   いまの管理薬剤師: ' + (chiefOn_(today_()) || '（未登録）'));
 
   /* ---- 日報と譲渡記録をまとめて書く ---- */
   ensureRowRoom_(SH.DAILY);
@@ -245,14 +314,25 @@ function seedWorstCaseMonth() {
   return out.join('\n');
 }
 
-/** 管理薬剤師の交代を登録する。既にある同じ就任日はそのまま使います */
-function seedChiefs_(weeks, names) {
+/**
+ * 管理薬剤師の交代を登録する。既にある同じ就任日はそのまま使います。
+ *
+ * ★ 任期は「その日から後ずっと」なので、足しっぱなしにすると
+ *   今日の管理薬剤師までテスト用の人に変わり、承認できなくなります。
+ *   期間の翌日から元の人に戻す任期を必ず足します。
+ */
+function seedChiefs_(weeks, names, range) {
   const t = table_(SH.TERM);
   const staff = staffList_();
   const idOf = function (n) {
     const s = staff.filter(function (x) { return x.name === n; })[0];
     return s ? s.id : '';
   };
+
+  // 足す前の状態で、期間の翌日に誰が管理薬剤師だったかを控えておく
+  const before = termList_();
+  const backTo = range ? addDays_(range.to, 1) : '';
+  const backName = backTo ? chiefOn_(backTo, before) : '';
 
   let plan = [];
   if (SEED.CHIEF_CHANGES === 'weekly') {
@@ -264,12 +344,19 @@ function seedChiefs_(weeks, names) {
     plan = [{ from: weeks[0], name: names[0] }];
   }
 
+  // 期間が終わったら元の人に戻す。これが無いと今日の管理薬剤師が変わったままになります
+  if (backName) plan.push({ from: backTo, name: backName, restore: true });
+
   const has = {};
   t.rows.forEach(function (x) { has[fmt_(x['就任日'])] = true; });
 
   plan.forEach(function (p) {
     if (has[p.from]) return;
-    appendRow_(t, { 'ID': uid_('T'), '担当者ID': idOf(p.name), '氏名': p.name, '就任日': p.from });
+    // 戻すための任期は本物の氏名で入るので、IDで見分けられるようにします
+    appendRow_(t, {
+      'ID': uid_(p.restore ? 'TSEED' : 'T'),
+      '担当者ID': idOf(p.name), '氏名': p.name, '就任日': p.from
+    });
   });
   return plan;
 }
@@ -327,17 +414,58 @@ function benchmarkWorstCase() {
   console.log('■ ' + w + ' の週を測ります（' + SEED.MONTH + ' の ' + weeks.length + '週のうち1つ）');
   console.log('');
   const t = benchmarkExport(w);
+  const sec = function (ms) { return (ms || 0) / 1000; };
+
+  // benchmarkExport は「使い回しが効く」前提で測るので、押印の時間は
+  // 下ごしらえ(base)のほうに入ります。いちばん遅い形のデータでは
+  // 使い回しが効かないので、その時間を毎週ぶん足し直します。
+  const stampSec = sec(t.stampMs);
+  const perFast = sec(t.copy) + sec(t.values);                 // 使い回しが効くとき
+  const perSlow = perFast + stampSec * 14;                     // 効かないとき(14コマ)
+  const slow = (SEED.CHIEF_CHANGES === 'weekly');
+  const per = slow ? perSlow : perFast;
+
+  console.log('');
+  console.log('■ 1コマあたりの押印');
+  console.log('   ' + sec(t.base).toFixed(1) + '秒 / ' + (t.baseStamps || 0) + 'コマ'
+    + ' = ' + stampSec.toFixed(2) + ' 秒/コマ');
+  console.log('   ここが出力時間のほとんどです');
+
+  console.log('');
+  console.log('■ 1週あたりの見込み');
+  console.log('   使い回しが効くとき  ' + perFast.toFixed(1) + ' 秒（押印 0 コマ）');
+  console.log('   効かないとき        ' + perSlow.toFixed(1) + ' 秒（押印 14 コマ）');
+  console.log('   このデータ（' + SEED.CHIEF_CHANGES + '）は '
+    + (slow ? '効きません' : '効きます') + ' → ' + per.toFixed(1) + ' 秒/週');
+
+  const budget = CFG.NIGHTLY.BUDGET_MS / 1000;
+  const setup = sec(t.setup);
+  const total = setup + per * weeks.length;
+
   console.log('');
   console.log('■ 6分の壁との突き合わせ');
-  const per = ((t.copy || 0) + (t.values || 0) + (t.seals || 0)) / 1000;
-  console.log('   1週あたり ' + per.toFixed(1) + ' 秒');
-  console.log('   ' + weeks.length + '週で ' + (per * weeks.length / 60).toFixed(1) + ' 分');
-  console.log('   夜間の1回あたりの上限は ' + (CFG.NIGHTLY.BUDGET_MS / 1000) + ' 秒なので、');
-  const perExec = Math.max(1, Math.floor(CFG.NIGHTLY.BUDGET_MS / 1000 / Math.max(per, 0.1) / 1.5));
-  console.log('   1回の実行で ' + perExec + ' 週ずつ、'
-    + Math.ceil(weeks.length / perExec) + ' 回に分かれる見込みです');
-  if (per * 60 > 150) {
-    console.log('   ★ 1週が2.5分を超えています。1回1週でも6分に近づきます');
+  console.log('   ' + weeks.length + '週ぶん = ' + total.toFixed(0) + ' 秒（'
+    + (total / 60).toFixed(1) + ' 分）');
+  console.log('   夜間の1回あたりの上限は ' + budget + ' 秒');
+
+  // 1回の実行に入る週数。1週目は必ず走り、2週目からは
+  // 「いちばん遅かった週がもう1回入る余地」を求めます(WEEK_MARGIN)
+  const room = budget - setup;
+  const perExec = Math.max(1, 1 + Math.floor((room - per) / (per * 1.5)));
+  const times = Math.ceil(weeks.length / perExec);
+  console.log('   1回の実行で ' + perExec + ' 週ずつ、' + times + ' 回に分かれる見込み');
+  console.log('   1回あたり およそ ' + (setup + per * Math.min(perExec, weeks.length)).toFixed(0)
+    + ' 秒');
+
+  console.log('');
+  if (per > 150) {
+    console.log('   ★ 1週が2.5分を超えています。1回1週でも6分に近づきます。');
+    console.log('     この仕組みでは確定しきれないので、作り直しが要ります');
+  } else if (setup + per > 300) {
+    console.log('   ★ 1回の実行が5分を超えます。6分の上限に近すぎます');
+  } else {
+    console.log('   6分の上限には余裕があります（1回あたり最大 '
+      + (setup + per * perExec).toFixed(0) + ' 秒）');
   }
   return t;
 }
@@ -398,10 +526,13 @@ function clearWorstCaseMonth() {
 
   /* ---- 任期 ---- */
   const tt = table_(SH.TERM);
-  const termRows = tt.rows.filter(function (x) { return isSeedName_(x['氏名']); })
+  const termRows = tt.rows.filter(function (x) {
+    return isSeedName_(x['氏名']) || isSeedTermId_(x['ID']);
+  })
     .map(function (x) { return x._row; }).sort(function (a, b) { return b - a; });
   termRows.forEach(function (row) { tt.sh.deleteRow(row); });
   say('   管理薬剤師任期から ' + termRows.length + ' 行を消しました');
+  say('   いまの管理薬剤師: ' + (chiefOn_(today_()) || '★ 未登録。名簿から登録してください'));
 
   /* ---- 担当者 ---- */
   const ts = table_(SH.STAFF);
