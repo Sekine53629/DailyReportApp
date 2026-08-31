@@ -6,15 +6,45 @@
  *  貼り付ける場所: スプレッドシート → 拡張機能 → Apps Script
  *  もう1つ、HTMLファイル「WebApp」も必要です。
  *
- *  貼り終わったら、関数 setup を1回だけ実行してください。
+ *  ------------------------------------------------------------
+ *  貼り替えたら updateDatabase を1回実行してください
+ *  ------------------------------------------------------------
+ *  シートの作成・列の追加・書式・古いデータの移行を、正しい順番で
+ *  まとめて通します。何度実行しても同じ結果になります。
+ *  そのあとデプロイし直すと、画面にも反映されます。
  *
- *  中身の並び:
- *    1. 設定          … ここだけ書き換える
- *    2. シートの用意
- *    3. 担当者・管理薬剤師・印影・変更履歴
- *    4. 日報の読み書き
- *    5. 画面から呼ばれる入口
- *    6. 週次帳票の出力
+ *  いま貼ってあるのがどの版かは、version() で確かめられます。
+ *
+ *  ------------------------------------------------------------
+ *  手で実行する関数（エディタの関数一覧から選んで実行）
+ *  ------------------------------------------------------------
+ *    version()               いまの版と、シートの状態を出す
+ *    setup()                 いちばん最初に1回だけ
+ *    updateDatabase()        貼り替えたあとに1回。★ふだんはこれだけ
+ *    dropLegacyXferColumns() 移行後に残る日報DBの古い8列を落とす
+ *    buildTemplate()         帳票テンプレートのシートを作る
+ *    checkTemplate()         テンプレートの形を確かめる
+ *    dumpTemplateLayout()    テンプレートの実寸を書き出す
+ *    checkSheets()           シートの列がそろっているかを確かめる
+ *    checkPrintFit()         帳票が紙に収まるかを確かめる
+ *    benchmarkExport()       出力のどこに時間がかかっているかを測る
+ *    freezeLastMonth()       前月を確定する
+ *    verifyFixes()           確定PDFが確定時のままかを確かめる
+ *    sweepStaleLocks()       期限切れの編集ロックを掃除する
+ *
+ *  ------------------------------------------------------------
+ *  中身の並び
+ *  ------------------------------------------------------------
+ *     1. 設定                    … ここだけ書き換える
+ *     2. シートの用意と共通アクセス
+ *     3. 担当者・管理薬剤師・印影・変更履歴
+ *     4. 日報の読み書き
+ *     5. 画面から呼ばれる入口
+ *     6. 週次帳票の出力
+ *     7. 記録簿ビュー(監査用)
+ *     8. 記録簿の入口
+ *     9. 月次の確定(PDFに焼いて残す)
+ *    10. 証跡(ハッシュ)と、まとめて渡すZIP
  * ============================================================
  */
 
@@ -35,6 +65,10 @@
    ############################################################ */
 
 const CFG = {
+
+  /** この Code.gs の版。貼り替えたときに version() で確かめられます。
+   *  スプレッドシート側に貼った版が古いと、新しい関数が見つかりません */
+  VERSION: '2026-08-31',
 
   /** 店舗。多店舗化したときはコードで日報DBを分けます */
   STORE_CODE: 'SPK',
@@ -247,6 +281,7 @@ function setup() {
   Logger.log('');
   Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
   Logger.log('Code.gs を新しくしたときは updateDatabase を1回実行してください。');
+  Logger.log('いま貼ってある版は version() で確かめられます（' + CFG.VERSION + '）。');
   Logger.log('');
   Logger.log('次に「デプロイ > 新しいデプロイ > 種類:ウェブアプリ」を実行してください。');
   Logger.log('  次のユーザーとして実行 : ' +
@@ -1374,6 +1409,47 @@ function migrateXfers() {
   return moved.length;
 }
 
+/**
+ * ★ いま貼ってあるのがどの版かを出します。
+ *
+ *    「新しい関数が見つからない」ときは、たいてい古い Code.gs が
+ *    貼ったままになっています。まずこれを実行してください。
+ */
+function version() {
+  const out = [];
+  const say = function (l) { out.push(l); console.log(l); };
+
+  say('■ Code.gs の版: ' + CFG.VERSION);
+  say('');
+  say('■ シート');
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const sh = ss_().getSheetByName(name);
+    if (!sh) { say('   ［' + name + '］ありません'); return; }
+    const missing = missingColumns_(name, SHEET_COLS[name]);
+    say('   ［' + name + '］' + headerOf_(sh).length + '列'
+      + (missing.length ? '（不足: ' + missing.join('、') + '）' : ''));
+  });
+  say('   ［' + T_().SHEET + '］'
+    + (ss_().getSheetByName(T_().SHEET) ? 'あります' : 'ありません'));
+
+  const legacy = LEGACY_XFER_COLS.filter(function (c) {
+    const sh = ss_().getSheetByName(SH.DAILY);
+    return sh && headerOf_(sh).indexOf(c) >= 0;
+  });
+  say('');
+  if (legacy.length) {
+    say('■ 日報DBに古い列が ' + legacy.length + ' つ残っています');
+    say('   updateDatabase → dropLegacyXferColumns の順に実行すると片づきます');
+  } else {
+    say('■ 古い列はありません');
+  }
+
+  say('');
+  say('この一覧に updateDatabase が無い、または上の版が空欄なら、');
+  say('スプレッドシートに貼ってある Code.gs が古いままです。貼り直してください。');
+  return out.join('\n');
+}
+
 /* ------------------------------------------------------------
  *  ブックを新しい形に合わせる
  *
@@ -1397,6 +1473,8 @@ function updateDatabase() {
   const out = [];
   const say = function (line) { out.push(line); console.log(line); };
 
+  say('■ Code.gs の版: ' + CFG.VERSION);
+  say('');
   say('■ シート');
   Object.keys(SHEET_COLS).forEach(function (name) {
     const cols = SHEET_COLS[name];
