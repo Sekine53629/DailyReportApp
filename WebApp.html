@@ -771,6 +771,45 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-stat.warn .v{color:var(--warn)}
 .lg-stat.crit .v{color:var(--crit)}
 
+/* 確定のパネル(記録簿)と、確定簿の一覧 */
+.lg-fix[hidden]{display:none}
+.lg-fix{
+  display:flex;align-items:flex-start;gap:10px;
+  border:1px solid var(--line);border-radius:10px;
+  padding:10px 12px;margin-bottom:12px;background:var(--surface);
+}
+.lg-fix .ic{font-size:15px;line-height:1.5}
+.lg-fix .bd{flex:1;min-width:0;font-size:12.5px;line-height:1.65;color:var(--ink-2)}
+.lg-fix .bd b{display:block;color:var(--ink);font-size:13px}
+.lg-fix .bd ul{margin:4px 0 0;padding-left:1.2em}
+.lg-fix .bd a{color:var(--accent);font-weight:600}
+.lg-fix.ok  {background:var(--ok-soft);   border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.lg-fix.wait{background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.lg-fix.go  {background:var(--info-soft); border-color:color-mix(in srgb,var(--info) 30%,transparent)}
+
+.fx-lead{font-size:12.5px;color:var(--muted);line-height:1.7;margin:0 0 14px}
+.fx-list{display:flex;flex-direction:column;gap:12px}
+.fx-month{border:1px solid var(--line);border-radius:10px;background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden}
+.fx-hd{display:flex;align-items:center;gap:10px;padding:10px 12px;
+  border-bottom:1px solid var(--line);background:var(--surface-2)}
+.fx-hd b{font-family:var(--disp);font-size:15px}
+.fx-badge{font-size:11px;padding:2px 8px;border-radius:999px;
+  background:var(--ok-soft);color:var(--ok);font-weight:700}
+.fx-badge.void{background:var(--crit-soft);color:var(--crit)}
+.fx-vers{display:flex;flex-direction:column}
+.fx-ver{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:8px 12px;font-size:12px;border-top:1px solid var(--line)}
+.fx-ver:first-child{border-top:0}
+.fx-ver .v{font-family:var(--mono);font-weight:700;min-width:2.2em}
+.fx-ver .at,.fx-ver .by{color:var(--muted);font-variant-numeric:tabular-nums}
+.fx-ver .nm{color:var(--accent);text-decoration:none;word-break:break-all}
+.fx-ver .note{flex-basis:100%;color:var(--ink-2);font-size:11.5px}
+.fx-ver .tag{font-size:11px;padding:1px 7px;border-radius:999px;
+  background:var(--crit-soft);color:var(--crit);font-weight:700}
+.fx-ver.void{opacity:.6}
+.fx-ver.void .nm{color:var(--muted);text-decoration:line-through}
+
 .lg-alerts[hidden]{display:none}
 .lg-alerts{
   background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
@@ -937,7 +976,7 @@ table.pv td.st i.pend{
         </svg><span class="dot" id="navLedgerDot" hidden></span></span>
         <span class="cap">記録簿</span>
       </button>
-      <button class="navcircle" id="navExport" aria-pressed="false" title="帳票の出力">
+      <button class="navcircle" id="navExport" aria-pressed="false" title="確定簿">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M7 9V4h10v5"/>
           <rect x="4" y="9" width="16" height="7" rx="1.5"/>
@@ -1098,18 +1137,20 @@ table.pv td.st i.pend{
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
     <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
-    <button class="btn ghost" id="lgPrint" title="ドライブにPDFを保存します（1週あたり数秒）">PDFを出力</button>
+    <button class="btn primary" id="lgFix"
+      title="月が締まったらPDFに焼いて残します（月に1回）">この月を確定</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
   <div class="lg-alerts" id="lgAlerts" hidden></div>
+  <div class="lg-fix" id="lgFixBox" hidden></div>
   <div id="lgBody"><div class="skeleton"></div></div>
   <div id="lgFoot"></div>
 </section>
 
 <section class="lgview" id="viewExport" hidden>
   <div class="lg-bar">
-    <div class="ttl"><b>帳票の出力</b><span>期間を選んでPDFにします</span></div>
+    <div class="ttl"><b>確定簿</b><span>確定した月のPDF。監査ではここから開きます</span></div>
   </div>
   <div class="card"><div class="card-bd" id="pvBody"></div></div>
 </section>
@@ -1275,7 +1316,7 @@ function enterView_(name, prev){
   } else if (name === 'ledger'){
     lgOpen();
   } else if (name === 'export'){
-    openPrint();
+    openFix();
   }
   lgBar();
 }
@@ -2316,179 +2357,90 @@ function daysSince(iso){
 /* ============================================================
    帳票の出力
    ============================================================ */
-/* 出力画面の状態。出力ジョブそのものは JOB が持ちます
-   (記録簿から始めても出力画面から始めても同じものなので) */
-var P = { from:'', to:'', preview:null, stale:false };
+/* 確定簿の状態。出力ジョブそのものは JOB が持ちます
+   (記録簿から確定しても、ここから作り直しても同じものなので) */
+var FIX = { data:null };
 
 /* 表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します */
-function openPrint(){
-  if (!P.from){
-    P.from = S.week.weekStart || S.week.days[0].date;
-    P.to   = S.week.days[6].date;
-  }
-  loadPreview();
-}
+function openFix(){ loadFix(); }
 
-function loadPreview(){
+function loadFix(){
   document.getElementById('pvBody').innerHTML = '<div class="skeleton"></div>';
-  call('getPrintPreview', [P.from], function(d){ P.preview = d; renderPrint(); });
+  call('getFixList', [], function(d){ FIX.data = d; renderFix(); });
 }
 
-function renderPrint(){
-  var d = P.preview;
+/* 確定済みのPDFを月ごとに並べる。
+   監査で「去年の8月を見せて」と言われたときに、ここから開きます。
+   直近の版を大きく出し、古い版と取り消した版はその下に小さく残します
+   (「いつ何を直したか」が見えることが、この画面のいちばんの役目です) */
+function renderFix(){
+  var d = FIX.data;
   var h = '';
 
-  if (!d.hasTemplate){
-    h += '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
-       + 'スクリプトエディタで <code>buildTemplate</code> を1回実行してください。'
-       + '実行すると「帳票テンプレート」シートが作られ、ここから出力できるようになります。'
-       + '</div></div>';
+  if (!d.months.length){
+    h = '<div class="blockmsg"><div><b>確定した月はまだありません</b>'
+      + '記録簿を開いて、月のすべての日が承認されると［この月を確定する］が押せます。'
+      + '確定するとPDFがドライブに残り、ここに並びます。</div></div>';
+    document.getElementById('pvBody').innerHTML = h;
+    return;
   }
 
-  h += '<div class="presets">'
-    +   preset('今週','thisWeek') + preset('先週','lastWeek')
-    +   preset('今月','thisMonth') + preset('前月','lastMonth')
-    + '</div>'
-    + '<div class="range">'
-    +   '<input type="date" id="pvFrom" value="' + P.from + '">'
-    +   '<span class="tilde">〜</span>'
-    +   '<input type="date" id="pvTo" value="' + P.to + '">'
-    +   '<button class="mini" id="pvShow" title="この期間で見え方を作り直します">表示</button>'
-    + '</div>';
+  h += '<p class="fx-lead">確定した月のPDFです。'
+     + '記録を直したいときは、記録簿で承認を解除して直し、もう一度確定してください。'
+     + '前の版は消さずに残ります。</p>';
 
-  var weeks = weekCount_(P.from, P.to);
-  h += '<p class="pvnote" id="pvNote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
-     + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
-
-  h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
-     + '<p class="pvscale" id="pvScale"></p>'
-     + '<div class="actions">'
-     +   '<button class="btn primary" id="pvGo"' + (d.hasTemplate ? '' : ' disabled') + '>'
-     +     'この期間をPDFにする</button>'
-     +   '<button class="btn ghost" id="pvPaper">この週をそのまま印刷</button>'
-     + '</div>';
+  h += '<div class="fx-list">' + d.months.map(function(m){
+    var cur = m.latest;
+    return '<div class="fx-month">'
+      + '<div class="fx-hd">'
+      +   '<b>' + esc(m.label) + '</b>'
+      +   (cur ? '<span class="fx-badge">第' + cur.version + '版</span>'
+              : '<span class="fx-badge void">有効な版がありません</span>')
+      +   '<div class="sp"></div>'
+      +   (cur ? '<a class="btn primary" href="' + esc(cur.url) + '" target="_blank"'
+              + ' rel="noopener">PDFを開く</a>' : '')
+      + '</div>'
+      + '<div class="fx-vers">' + m.versions.map(fxVer_).join('') + '</div>'
+      + '</div>';
+  }).join('') + '</div>';
 
   document.getElementById('pvBody').innerHTML = h;
-  wirePrint_();
-  fitPreview_();
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-void]'), function(b){
+    b.addEventListener('click', function(){ fxVoid(b.getAttribute('data-void')); });
+  });
+}
+
+function fxVer_(v){
+  return '<div class="fx-ver' + (v.alive ? '' : ' void') + '">'
+    + '<span class="v">v' + v.version + '</span>'
+    + '<span class="at">' + esc(v.at) + '</span>'
+    + '<span class="by">' + esc(v.by || '—') + '</span>'
+    + '<a class="nm" href="' + esc(v.url) + '" target="_blank" rel="noopener">'
+    +   esc(v.name) + '</a>'
+    + (v.note ? '<span class="note">' + esc(v.note) + '</span>' : '')
+    + (v.alive ? '<button class="mini" data-void="' + esc(v.id) + '">取り消す</button>'
+               : '<span class="tag">取消</span>')
+    + '</div>';
+}
+
+/* 誤って確定した版を取り消す。ファイルもDriveの記録も消しません。
+   消してしまうと「間違えて出した」という事実まで消えてしまうためです。 */
+function fxVoid(id){
+  var why = prompt('この版を取り消します。\n'
+    + 'PDFそのものは消えません。台帳に「取消」として残り、理由が記録されます。\n\n'
+    + '理由を書いてください。', '');
+  if (why === null) return;
+  if (!String(why).trim()){ toast('理由を書いてください', true); return; }
+  call('voidFix', [{ id:id, reason:why, actor:S.me }], function(d){
+    FIX.data = d; renderFix(); toast('取り消しました');
+    if (LG.data) lgOpen(LG.data.monthStart);
+  }, fail);
 }
 
 /* 帳票は列幅の合計が1000pxを超えるので、画面によっては入りきりません。
    はみ出す分だけ縮めて、1週間の全体が一目で分かるようにします。
-   縮めたときは、その倍率を下に出します(刷るのは常に原寸) */
-function fitPreview_(){
-  var wrap = document.getElementById('pvWrap');
-  var note = document.getElementById('pvScale');
-  if (!wrap) return;
-  var tbl = wrap.querySelector('table.pv');
-  if (!tbl) return;
-
-  // いったん元に戻してから測る
-  wrap.classList.remove('fit');
-  wrap.style.height = '';
-  tbl.style.transform = '';
-  if (note) note.textContent = '';
-
-  var avail = wrap.clientWidth - 20;      // .pvwrap の内側の余白ぶん
-  var w = tbl.offsetWidth;
-  if (!w || !avail || w <= avail) return; // 収まっているならそのまま
-
-  var k = avail / w;
-  tbl.style.transform = 'scale(' + k.toFixed(4) + ')';
-  wrap.style.height = Math.ceil(tbl.offsetHeight * k) + 'px';
-  wrap.classList.add('fit');
-  if (note){
-    note.textContent = '画面の幅に合わせて ' + Math.round(k * 100) + '% で表示しています。'
-      + '印刷・PDFは原寸です。';
-  }
-}
-
-window.addEventListener('resize', function(){
-  if (VIEW === 'export') fitPreview_();
-});
-
 /* 印刷と出力の実装は「出力」の節にまとめてあります(下の方) */
-
-function preset(label, key){
-  return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
-}
-
-function wirePrint_(){
-  Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'), function(b){
-    b.addEventListener('click', function(){
-      applyPreset_(b.getAttribute('data-preset'));
-      P.stale = false;      // 開始日と最終日が一度に決まるので、そのまま作り直す
-      loadPreview();
-    });
-  });
-  // 日付を選ぶたびに作り直すと、開始日を選んだ時点でも一度生成してしまう。
-  // ここでは値を控えるだけにして、「表示」を押されたときに作り直す。
-  ['pvFrom','pvTo'].forEach(function(id){
-    var el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener('change', function(){
-      P.from = document.getElementById('pvFrom').value;
-      P.to   = document.getElementById('pvTo').value;
-      if (P.from && P.to && P.from > P.to){
-        P.to = P.from;
-        document.getElementById('pvTo').value = P.to;
-      }
-      pvRangeChanged_();
-    });
-  });
-  var show = document.getElementById('pvShow');
-  if (show) show.addEventListener('click', function(){
-    if (!P.from || !P.to){ toast('開始日と最終日を選んでください', true); return; }
-    P.stale = false;
-    loadPreview();
-  });
-  var paper = document.getElementById('pvPaper');
-  if (paper) paper.addEventListener('click', function(){ printPaper_('export'); });
-  var go = document.getElementById('pvGo');
-  if (go) go.addEventListener('click', startPrint_);
-}
-
-/* 期間を変えたときは、週数の表示だけを更新する。
-   見え方の作り直し(サーバー往復)は「表示」を押されるまで待つ。 */
-function pvRangeChanged_(){
-  P.stale = true;
-  var ok   = !!(P.from && P.to);
-  var note = document.getElementById('pvNote');
-  var show = document.getElementById('pvShow');
-  var go   = document.getElementById('pvGo');
-
-  if (show){ show.disabled = !ok; show.classList.toggle('on', ok); }
-  if (go) go.disabled = !ok;
-  if (!note) return;
-
-  if (!ok){
-    note.textContent = '開始日と最終日を選んでください。';
-    return;
-  }
-  var weeks = weekCount_(P.from, P.to);
-  note.innerHTML = jp(P.from) + ' 〜 ' + jp(P.to) + ' ＝ ' + weeks + ' 週分 / '
-    + weeks + ' ページ。'
-    + '<b style="display:inline">［表示］を押すと、この期間の見え方を作り直します。</b>'
-    + '（出力は押さなくても、この期間で行われます）';
-}
-
-function applyPreset_(key){
-  var t = S.week.today, p = t.split('-');
-  var d = new Date(+p[0], +p[1]-1, +p[2]);
-  var iso = function(x){
-    return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0')
-         + '-' + String(x.getDate()).padStart(2,'0');
-  };
-  if (key === 'thisWeek'){ P.from = S.week.weekStart; P.to = addDays(P.from, 6); }
-  else if (key === 'lastWeek'){ P.from = addDays(S.week.weekStart, -7); P.to = addDays(P.from, 6); }
-  else if (key === 'thisMonth'){
-    P.from = iso(new Date(d.getFullYear(), d.getMonth(), 1));
-    P.to   = iso(new Date(d.getFullYear(), d.getMonth()+1, 0));
-  } else {
-    P.from = iso(new Date(d.getFullYear(), d.getMonth()-1, 1));
-    P.to   = iso(new Date(d.getFullYear(), d.getMonth(), 0));
-  }
-}
 
 /* 何週になるか(帳票は週単位なので、端の週はまるごと1ページ) */
 function weekCount_(from, to){
@@ -2526,76 +2478,20 @@ function pvHead_(L){
     + '</tr></thead>';
 }
 
-function printTable_(d){
-  var L = d.layout;
-  if (!L) return '<div class="logempty">テンプレートが読めませんでした。</div>';
-
-  var R = d.ranges;
-  var C = L.col;
-  var px = function(v){ return Math.round(v) + 'px'; };
-
-  var head = pvHead_(L);
-
-  // 未記入の日はテンプレートの下地(℃　/ と %)をそのまま出す
-  var cell = function(v, r, unit, dec){
-    if (v === null || v === undefined) return '<td class="e">' + esc(unit) + '</td>';
-    var ng = r && (v < r[0] || v > r[1]);
-    return '<td class="e' + (ng ? ' ng' : '') + '">'
-         + Number(v).toFixed(dec) + esc(unit) + '</td>';
-  };
-  var stamp = function(name){
-    if (!name) return '<td class="st"></td>';
-    var u = d.seals[name];
-    return '<td class="st">' + (u ? '<img src="' + u + '" alt="">' : '')
-         + '<span>' + esc(name) + '</span></td>';
-  };
-  var blank = function(n){
-    var out = '';
-    for (var i = 0; i < n; i++) out += '<td></td>';
-    return out;
-  };
-
-  var body = d.rows.map(function(r, i){
-    var hUp = L.heights[L.headRows + i * L.rowsPerDay];
-    var hLo = L.heights[L.headRows + i * L.rowsPerDay + 1];
-    return '<tr style="height:' + px(hUp) + '">'
-      + '<td class="dt" rowspan="' + L.rowsPerDay + '">' + r.date.replace(/-/g,'/')
-      +   '<b>' + r.dow + '</b>' + esc(r.hours) + '</td>'
-      + '<td class="n">' + (r.filled && r.rx !== null ? r.rx : '') + '</td>'
-      + '<td class="u">' + esc(L.unitRx) + '</td>'
-      + '<td class="n">' + (r.filled && r.inquiry !== null ? r.inquiry : '') + '</td>'
-      + '<td class="u">' + esc(L.unitInq) + '</td>'
-      + blank(C.ROOM_T - C.INQ - 2)          // 単位とG列の間にある列(F列など)
-      + cell(r.roomTemp, R.ROOM_TEMP,  L.phTemp,  1)
-      + cell(r.roomHumid, R.ROOM_HUMID, L.phHumid, 0)
-      + cell(r.coldTemp, R.COLD_TEMP,  L.phTemp,  1)
-      + cell(r.coldHumid, R.COLD_HUMID, L.phHumid, 0)
-      // 押印欄の並びは設定に従う(担当者印と管理者印を入れ替えても崩れない)
-      + (C.STAFF < C.ADMIN ? stamp(r.staff) + stamp(r.admin)
-                           : stamp(r.admin) + stamp(r.staff))
-      + '</tr>'
-      + '<tr style="height:' + px(hLo) + '">'
-      +   '<td class="nt" colspan="' + (L.cols - C.NOTE + 1) + '">' + esc(r.note) + '</td>'
-      + '</tr>';
-  }).join('');
-
-  return '<table class="pv" style="width:' + px(L.widths.reduce(function(a,b){return a+b;},0))
-    + '">' + head + '<tbody>' + body + '</tbody></table>';
-}
-
 /* ============================================================
    出力
 
-   ボタンは4つありますが、中身は2通りしかありません。
+   出し方は2通りです。役割がはっきり違います。
 
-     紙に出す   … 画面に描いてある帳票をそのまま印刷する。待ち時間なし
-     PDFにする  … 帳票テンプレート経由でドライブに保存する。1週あたり数秒
+     印刷   … 画面に描いてある帳票をそのまま刷る。サーバー往復なし、待ち時間なし。
+              日々の確認や、監査でその場に出すのはこちら。
+     確定   … 月が締まったときに1回だけPDFに焼き、ドライブに残す。
+              あとで印影やテンプレートを直しても、確定したPDFは変わりません。
+              「その時点でこうだった」の証明になるのがこちら。
 
    どのボタンから押しても、必ずこの節を通ります。
-     記録簿の「印刷」          → printPaper_('ledger')
-     出力画面の「この週を…印刷」→ printPaper_('export')
-     記録簿の「PDFを出力」      → startExportJob_({ … })  表示中の月ぜんぶ
-     出力画面の「この期間を…」  → startExportJob_({ … })  選んだ期間
+     記録簿の「印刷」          → printPaper_()
+     記録簿の「この月を確定」   → startJob_({ fn:'startFreeze', … })
 
    用紙・向き・余白はサーバーの CFG.PDF が唯一の出どころです。起動時に
    受け取って印刷用のCSSにも当てるので、ブラウザ印刷とPDF出力で
@@ -2659,20 +2555,13 @@ function printScale_(){
   return avail / w;
 }
 
-/** 画面をそのまま紙に出す。src は 'ledger' か 'export' */
-function printPaper_(src){
-  if (src === 'ledger'){
-    var d = LG.data;
-    if (!d) return;
-    if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
-    if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-    if (LG.edit){ LG.edit = false; lgRender(); }   // 入力欄のまま刷らない
-  } else {
-    if (!P.preview || !P.preview.hasTemplate){
-      toast('帳票テンプレートがありません', true);
-      return;
-    }
-  }
+/** 記録簿に描いてある帳票を、そのまま紙に出す(1週 = 1ページ) */
+function printPaper_(){
+  var d = LG.data;
+  if (!d) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+  if (LG.edit){ LG.edit = false; lgRender(); }     // 入力欄のまま刷らない
   // 描き直した直後に呼ばれることがあるので、反映を待ってから
   setTimeout(function(){ window.print(); }, 60);
 }
@@ -2685,7 +2574,6 @@ window.addEventListener('beforeprint', function(){
 
 window.addEventListener('afterprint', function(){
   document.documentElement.style.removeProperty('--pscale');
-  if (VIEW === 'export') fitPreview_();
 });
 
 /* ---------- PDFにして残す ----------
@@ -2746,29 +2634,27 @@ function jobEta_(j){
 }
 
 /** o = { from, to, title, hasTemplate } */
-function startExportJob_(o){
+/**
+ * PDFを作るジョブを始める。
+ * o = { fn:呼ぶサーバー関数, args:引数, weeks:何週ぶんか, title:帯に出す名前,
+ *       confirm:始める前に見せる文 }
+ */
+function startJob_(o){
   if (JOB.busy){
     toast('ほかの出力を実行中です。終わるまでお待ちください', true);
     return;
   }
-  if (!o.from || !o.to){ toast('開始日と最終日を選んでください', true); return; }
-  if (!o.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
-
-  var weeks = weekCount_(o.from, o.to);
-  var est = estimateSec_(weeks);
-  if (!confirm(jp(o.from) + ' 〜 ' + jp(o.to) + ' の ' + weeks + ' 週分をPDFにします。\n'
-      + (est ? '前回までの実績から、およそ ' + humanSec_(est) + ' かかる見込みです。\n' : '')
-      + 'ドライブの「業務日報_出力」フォルダに保存します。\nよろしいですか？')) return;
+  if (!confirm(o.confirm)) return;
 
   JOB.busy = true;
   JOB.at0 = Date.now();
   JOB.data = {
-    state:'running', done:0, weeks:new Array(weeks), title:o.title,
+    state:'running', done:0, weeks:new Array(o.weeks), title:o.title,
     startedAt: new Date().toISOString()
   };
   renderJob_();
 
-  call('startExport', [{ from:o.from, to:o.to, title:o.title, actor:S.me }], function(job){
+  call(o.fn, o.args, function(job){
     JOB.data = job;
     renderJob_();
     pollJob_();
@@ -2786,7 +2672,16 @@ function pumpJob_(){
     } else {
       endJob_();
       renderJob_();
-      if (job && job.state === 'done') toast('PDFを出力しました');
+      if (job && job.state === 'done'){
+        toast(job.kind === 'freeze'
+          ? job.month + ' を第' + job.version + '版として確定しました'
+          : 'PDFを出力しました');
+        // 確定したら、記録簿の表示と確定簿を新しくする
+        if (job.kind === 'freeze'){
+          if (LG.data) lgOpen(LG.data.monthStart);
+          if (VIEW === 'export') loadFix();
+        }
+      }
       else if (job && job.state === 'error') toast(job.message || '出力できませんでした', true);
     }
   }, function(e){ endJob_(); renderJob_(); fail(e); });
@@ -2925,27 +2820,48 @@ function jobTitle_(from, to){
 
 /* ---------- 各ボタンの入口 ---------- */
 
-/** 出力画面「この期間をPDFにする」 */
-function startPrint_(){
-  startExportJob_({
-    from: P.from, to: P.to, title: jobTitle_(P.from, P.to),
-    hasTemplate: !!(P.preview && P.preview.hasTemplate)
-  });
-}
-
-/** 記録簿「PDFを出力」。表示している月ぜんぶ */
-function lgExport(){
-  var d = LG.data;
-  if (!d) return;
+/**
+ * 記録簿「この月を確定する」。
+ *
+ * 確定できるのは、月が終わっていて、未記録が無く、全日が承認済みのときだけです。
+ * 2回目以降は作り直す理由を書いてもらいます。前の版は消さず、
+ * 新しい版として積み増します。
+ */
+function lgFreeze(){
+  var d = LG.data, f = d && d.freeze;
+  if (!f) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
   if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-  startExportJob_({
-    from: d.monthStart, to: d.monthEnd, title: d.monthLabel + '分',
-    hasTemplate: d.hasTemplate
+  if (!f.ok){ toast('この月はまだ確定できません：' + f.reasons.join('／'), true); return; }
+
+  var note = '';
+  if (f.frozen){
+    note = prompt(d.monthLabel + ' には、すでに第' + f.latest.version + '版があります。\n'
+      + 'もう一度確定すると、第' + f.nextVersion + '版として積み増します'
+      + '（前の版は消えません）。\n\n'
+      + '作り直す理由を書いてください。監査で参照されます。', '');
+    if (note === null) return;
+    if (!String(note).trim()){ toast('理由を書いてください', true); return; }
+  }
+
+  var weeks = weekCount_(f.stat.start, f.stat.end);
+  var est = estimateSec_(weeks);
+  startJob_({
+    fn: 'startFreeze',
+    args: [{ month:f.month, note:note, actor:S.me }],
+    weeks: weeks,
+    title: d.monthLabel + ' 第' + f.nextVersion + '版',
+    confirm: d.monthLabel + ' を確定します（第' + f.nextVersion + '版）。\n'
+      + weeks + ' 週分 = ' + weeks + ' ページ。'
+      + (est ? '\nおよそ ' + humanSec_(est) + ' かかる見込みです。' : '')
+      + '\n\nドライブの「業務日報_出力／' + f.month.slice(0, 4) + '」に残ります。\n'
+      + 'あとから記録を直したいときは、承認を解除して直し、'
+      + 'もう一度確定してください。\n\nよろしいですか？'
   });
 }
 
 /** 記録簿「印刷」 */
-function lgPaper(){ printPaper_('ledger'); }
+function lgPaper(){ printPaper_(); }
 
 
 
@@ -3279,6 +3195,59 @@ function lgTable_(week){
 }
 
 /* ---------- 画面全体 ---------- */
+/**
+ * 確定のパネル。「いま何ができるか」を1か所に出します。
+ *
+ *   確定済み … 版とリンクを出す。作り直せることも書いておく
+ *   確定できる … 押していいと分かるように出す
+ *   まだ無理  … 何が足りないかを、そのまま直せる言葉で出す
+ */
+function lgFixBox_(d){
+  var box = document.getElementById('lgFixBox');
+  var btn = document.getElementById('lgFix');
+  var f = d.freeze;
+  if (!f){ box.hidden = true; btn.disabled = true; return; }
+
+  box.hidden = false;
+  box.classList.remove('ok', 'wait', 'go');
+
+  if (f.frozen){
+    var v = f.latest;
+    box.classList.add('ok');
+    box.innerHTML = '<span class="ic">✓</span><div class="bd">'
+      + '<b>確定済み　第' + v.version + '版</b>'
+      + esc(v.at) + '　' + esc(v.by || '—') + '　'
+      + '<a href="' + esc(v.url) + '" target="_blank" rel="noopener">PDFを開く</a>'
+      + (v.note ? '<br>' + esc(v.note) : '')
+      + '<br>記録を直したいときは、承認を解除して直し、'
+      + 'もう一度確定してください。前の版は残ります。'
+      + '</div>';
+    btn.disabled = false;
+    btn.textContent = '確定を作り直す';
+    return;
+  }
+
+  if (f.ok){
+    box.classList.add('go');
+    box.innerHTML = '<span class="ic">●</span><div class="bd">'
+      + '<b>この月は確定できます</b>'
+      + 'すべての日が記録され、承認も済んでいます。'
+      + '［この月を確定］を押すとPDFに焼いて、ドライブに残します。'
+      + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'この月を確定';
+    return;
+  }
+
+  box.classList.add('wait');
+  box.innerHTML = '<span class="ic">…</span><div class="bd">'
+    + '<b>まだ確定できません</b>'
+    + '<ul>' + f.reasons.map(function(r){ return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>'
+    + '</div>';
+  btn.disabled = true;
+  btn.textContent = 'この月を確定';
+}
+
 function lgStat_(k, v, cls){
   return '<div class="lg-stat ' + (cls || '') + '">'
        + '<span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';
@@ -3326,6 +3295,8 @@ function lgRender(){
         }).join('')
     : '';
 
+  lgFixBox_(d);
+
   if (!d.hasTemplate){
     document.getElementById('lgBody').innerHTML =
         '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
@@ -3363,7 +3334,7 @@ document.getElementById('navInput').addEventListener('click', function(){ showVi
 document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
 document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
 document.getElementById('lgPaper').addEventListener('click', lgPaper);
-document.getElementById('lgPrint').addEventListener('click', lgExport);
+document.getElementById('lgFix').addEventListener('click', lgFreeze);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
 

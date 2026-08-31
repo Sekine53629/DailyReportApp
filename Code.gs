@@ -179,7 +179,8 @@ const SH = {
   DAILY: '日報DB',
   STAFF: '担当者マスタ',
   TERM:  '管理薬剤師任期',
-  LOG:   '変更履歴'
+  LOG:   '変更履歴',
+  FIX:   '確定台帳'
 };
 
 /** 列定義。ここを変えたら setup() を再実行してください */
@@ -193,7 +194,10 @@ const COLS = {
           '担当者', '入力日時', '管理者', '承認日時', '状態', '編集者', '編集開始'],
   STAFF: ['ID', '氏名', 'メール', '在籍', '印影ファイルID', '登録日時'],
   TERM:  ['ID', '担当者ID', '氏名', '就任日'],
-  LOG:   ['日時', '操作', '内容', '操作者']
+  LOG:   ['日時', '操作', '内容', '操作者'],
+  // 月次を確定してPDFに焼いた記録。1行 = 1つの版
+  FIX:   ['ID', '対象月', '版', '確定日時', '確定者',
+          'ファイル名', 'ファイルID', 'リンク', '状態', '備考']
 };
 
 const PROP = PropertiesService.getScriptProperties();
@@ -208,6 +212,7 @@ function setup() {
   ensureSheet_(SH.STAFF, COLS.STAFF);
   ensureSheet_(SH.TERM,  COLS.TERM);
   ensureSheet_(SH.LOG,   COLS.LOG);
+  ensureSheet_(SH.FIX,   COLS.FIX);
 
   // 日付と就任日は文字列で持つ(タイムゾーンのずれで1日前後するのを避けるため)
   formatTextColumn_(SH.DAILY, '日付');
@@ -216,7 +221,8 @@ function setup() {
   sealFolder_();   // 印影フォルダを作っておく
 
   Logger.log('====================================================');
-  Logger.log('シートを用意しました: ' + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG].join(' / '));
+  Logger.log('シートを用意しました: '
+    + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG, SH.FIX].join(' / '));
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
   Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
@@ -269,6 +275,7 @@ SHEET_COLS[SH.DAILY] = COLS.DAILY;
 SHEET_COLS[SH.STAFF] = COLS.STAFF;
 SHEET_COLS[SH.TERM]  = COLS.TERM;
 SHEET_COLS[SH.LOG]   = COLS.LOG;
+SHEET_COLS[SH.FIX]   = COLS.FIX;
 
 /** この実行で確認済みのシート */
 const SCHEMA_CHECKED = {};
@@ -1838,7 +1845,12 @@ function weeksBetween_(fromIso, toIso) {
  * @param {Object} p {from:'yyyy-MM-dd', to:'yyyy-MM-dd', title:'2026年8月分'}
  */
 function startExport(p) {
-  return guard_('startExport', function () {
+  return guard_('startExport', function () { return startExport_(p); });
+}
+
+/** 出力の開始そのもの。月次の確定(startFreeze)からも呼びます */
+function startExport_(p) {
+  {
     // 出力先の一時ファイルはジョブ1件ぶんしか覚えられない。
     // 走っているうちに次を始めると、前の一時ファイルが行方不明になる
     const cur = currentJob_();
@@ -1859,7 +1871,7 @@ function startExport(p) {
     if (weeks.length > 60) throw new Error('一度に出力できるのは60週までです。期間を分けてください');
 
     // 出力先の一時スプレッドシート(最後にPDFにしてから捨てる)
-    const title = (p.title || (from + '_' + to)) + '_業務日報';
+    const title = p.title || (from + '_' + to + '_業務日報');
     const temp = SpreadsheetApp.create(title);
     temp.getSheets()[0].setName('_');   // 既定シートは最後に消す
 
@@ -1874,7 +1886,7 @@ function startExport(p) {
     PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
     audit_('帳票の出力を開始', from + ' 〜 ' + to + '（' + weeks.length + '週）', p.actor);
     return job;
-  });
+  }
 }
 
 /** 続きを処理する。時間が来たら止まるので、完了まで繰り返し呼びます */
@@ -1970,13 +1982,21 @@ function finishExport_(job, temp) {
     SpreadsheetApp.flush();
 
     const pdf = exportPdf_(job.tempId, job.title);
-    const file = outFolder_().createFile(pdf);
+    const folder = (job.kind === 'freeze')
+      ? outFolderFor_(job.month.slice(0, 4))
+      : outFolder_();
+    const file = folder.createFile(pdf);
 
     job.state = 'done';
     job.pdfUrl = file.getUrl();
     job.finishedAt = new Date().toISOString();
     rememberRate_(job);        // 次に出すときの「およそ何分」に使う
-    audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+
+    if (job.kind === 'freeze') {
+      recordFix_(job, file);   // 確定台帳に版として残す
+    } else {
+      audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+    }
   } catch (e) {
     job.state = 'error';
     job.message = String(e && e.message ? e.message : e);
@@ -2161,6 +2181,13 @@ function outFolder_() {
   return folder;
 }
 
+/** 年ごとの入れ物。確定PDFは 業務日報_出力/2026/ のように分けて置きます */
+function outFolderFor_(year) {
+  const root = outFolder_();
+  const found = root.getFoldersByName(String(year));
+  return found.hasNext() ? found.next() : root.createFolder(String(year));
+}
+
 function currentJob_() {
   const raw = PROP.getProperty(PRINT.JOB_KEY);
   return raw ? JSON.parse(raw) : null;
@@ -2215,7 +2242,7 @@ function runExportNow_(from, to, title) {
 /** ★ 今週分だけ出す */
 function exportThisWeek() {
   const w = weekStart_(today_());
-  return runExportNow_(w, addDays_(w, 6), w + '_週報');
+  return runExportNow_(w, addDays_(w, 6), w + '_週報_業務日報');
 }
 
 /** ★ 前月分を出す */
@@ -2224,14 +2251,14 @@ function exportLastMonth() {
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   return runExportNow_(fmt_(first), fmt_(last),
-    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分');
+    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分_業務日報');
 }
 
 /** ★ 表示中の月を出す(記録簿のボタンと同じ範囲) */
 function exportThisMonth() {
   const t = today_();
   return runExportNow_(monthStart_(t), monthEnd_(t),
-    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分');
+    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分_業務日報');
 }
 
 /* ############################################################
@@ -2399,7 +2426,8 @@ function ledgerPayload_(anchorIso) {
     seals: seals,
     weeks: weeks,
     stat: stat,
-    alerts: alertList
+    alerts: alertList,
+    freeze: freezeCheck_(mStart.slice(0, 7), idx, terms)
   };
 }
 
@@ -2498,3 +2526,236 @@ function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function ()
   unapproveDay_(p);
   return ledgerPayload_(p.date);
 }); }
+
+
+/* ############################################################
+   9. 月次の確定(PDFに焼いて残す)
+   ############################################################
+   日々の記録は「データ」が正本で、画面(記録簿ビュー)から毎回描き直します。
+   ただしそれだけだと、あとから印影を差し替えたりテンプレートの列幅を
+   変えたりしたときに、過去の帳票の見た目まで変わってしまいます。
+   監査で「これは当時のものです」と言えなくなるため、月が締まった時点で
+   1回だけPDFに焼き、それを残します。
+
+   ・確定できるのは「月が終わっていて、未記録が無く、全日が承認済み」のときだけ
+   ・訂正が出たら、承認を解除して直し、もう一度確定する。
+     前の版は消さず、新しい版として積み増します(v1, v2, …)
+   ・変更履歴シートに「何をなぜ直したか」が残るので、版と履歴が対応します
+
+   確定PDFは 業務日報_出力/<年>/ に、次の名前で入ります。
+     2026-08_業務日報_v2_確定20260915.pdf
+   ############################################################ */
+
+/** その月の記録の埋まり具合。記録簿を作るときは idx / terms を渡して読み直しを避けます */
+function monthStats_(month, idx, terms) {
+  const mStart = month + '-01';
+  const mEnd = monthEnd_(mStart);
+  const i = idx || dailyIndex_();
+  const tm = terms || termList_();
+  const out = { month: month, start: mStart, end: mEnd,
+                days: 0, filled: 0, approved: 0, missing: 0 };
+
+  for (let d = mStart; d <= mEnd; d = addDays_(d, 1)) {
+    out.days++;
+    const day = toDay_(d, i.map[d], tm);
+    if (day.state === 'empty' || day.state === 'editing') { out.missing++; continue; }
+    out.filled++;
+    if (day.state === 'approved') out.approved++;
+  }
+  return out;
+}
+
+/** 確定台帳をぜんぶ読む(新しい順) */
+function fixList_() {
+  const t = table_(SH.FIX);
+  return t.rows.map(function (r) {
+    return {
+      id: String(r['ID']),
+      month: String(r['対象月']),
+      version: Number(r['版']) || 0,
+      at: (r['確定日時'] instanceof Date)
+        ? Utilities.formatDate(r['確定日時'], CFG.TZ, 'yyyy/MM/dd HH:mm')
+        : String(r['確定日時'] || ''),
+      by: String(r['確定者'] || ''),
+      name: String(r['ファイル名'] || ''),
+      fileId: String(r['ファイルID'] || ''),
+      url: String(r['リンク'] || ''),
+      alive: String(r['状態'] || '有効') !== '取消',
+      note: String(r['備考'] || ''),
+      _row: r._row
+    };
+  }).sort(function (a, b) {
+    if (a.month !== b.month) return a.month < b.month ? 1 : -1;   // 新しい月が先
+    return b.version - a.version;                                  // 新しい版が先
+  });
+}
+
+/** その月の版だけ(新しい順) */
+function fixOf_(month, all) {
+  return (all || fixList_()).filter(function (x) { return x.month === month; });
+}
+
+/** 次に付ける版番号。取り消した版も番号は使い切ります(番号を再利用しない) */
+function nextVersion_(versions) {
+  return versions.reduce(function (m, x) { return Math.max(m, x.version); }, 0) + 1;
+}
+
+/**
+ * その月を確定できるか。できないときは理由を並べて返します。
+ * 画面はこれをそのまま出すので、理由は運用者が読んで動ける言葉にしています。
+ */
+function freezeCheck_(month, idx, terms) {
+  const stat = monthStats_(month, idx, terms);
+  const versions = fixOf_(month);
+  const live = versions.filter(function (x) { return x.alive; });
+  const reasons = [];
+
+  if (stat.end >= today_()) reasons.push('その月がまだ終わっていません');
+  if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
+  const unapproved = stat.filled - stat.approved;
+  if (unapproved) reasons.push('未承認が ' + unapproved + ' 日あります');
+
+  return {
+    month: month,
+    stat: stat,
+    unapproved: unapproved,
+    versions: versions,
+    latest: live.length ? live[0] : null,
+    frozen: !!live.length,
+    nextVersion: nextVersion_(versions),
+    ok: !reasons.length,
+    reasons: reasons
+  };
+}
+
+/** 確定した結果を台帳に1行残す */
+function recordFix_(job, file) {
+  const t = table_(SH.FIX);
+  appendRow_(t, {
+    'ID': uid_('F'),
+    '対象月': job.month,
+    '版': job.version,
+    '確定日時': new Date(),
+    '確定者': job.actor || '',
+    'ファイル名': file.getName(),
+    'ファイルID': file.getId(),
+    'リンク': file.getUrl(),
+    '状態': '有効',
+    '備考': String(job.note || '')
+  });
+  audit_('月次を確定', job.month + '（第' + job.version + '版）'
+    + (job.note ? '：' + job.note : ''), job.actor || '');
+}
+
+/**
+ * 月次の確定を始める。あとは runExportChunk を繰り返すだけで、
+ * 期間指定の出力と同じ仕組みで進みます。
+ */
+function startFreeze(p) {
+  return guard_('startFreeze', function () {
+    const month = String(p.month || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('対象月が正しくありません');
+
+    const chk = freezeCheck_(month);
+    if (!chk.ok) {
+      throw new Error('この月はまだ確定できません：' + chk.reasons.join('／'));
+    }
+    // 2回目以降は、なぜもう一度確定するのかを残してもらう
+    const note = String(p.note || '').trim();
+    if (chk.frozen && !note) {
+      throw new Error('すでに第' + chk.latest.version
+        + '版があります。作り直す理由を書いてください');
+    }
+
+    const v = chk.nextVersion;
+    const job = startExport_({
+      from: chk.stat.start,
+      to: chk.stat.end,
+      title: month + '_業務日報_v' + v
+        + '_確定' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyyMMdd'),
+      actor: p.actor
+    });
+    job.kind = 'freeze';
+    job.month = month;
+    job.version = v;
+    job.note = note;
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    return job;
+  });
+}
+
+/**
+ * 誤って確定した版を取り消す。ファイルもDriveの記録も消しません。
+ * 消してしまうと「間違えて出した」という事実まで消えてしまうため、
+ * 台帳に取消として残し、理由を付けます。
+ */
+function voidFix(p) {
+  return guard_('voidFix', function () {
+    const why = String(p.reason || '').trim();
+    if (!why) throw new Error('取り消す理由を書いてください');
+
+    const t = table_(SH.FIX);
+    const row = t.rows.filter(function (r) { return String(r['ID']) === String(p.id); })[0];
+    if (!row) throw new Error('確定台帳にありません');
+    if (String(row['状態'] || '') === '取消') throw new Error('すでに取り消されています');
+
+    writeRow_(t, row._row, {
+      '状態': '取消',
+      '備考': String(row['備考'] || '') + (row['備考'] ? ' / ' : '') + '取消：' + why
+    });
+    audit_('確定を取り消し',
+      String(row['対象月']) + '（第' + row['版'] + '版）：' + why, p.actor || '');
+    return fixPayload_();
+  });
+}
+
+/** 確定簿の画面に渡す形 */
+function fixPayload_() {
+  const all = fixList_();
+  const byMonth = {};
+  all.forEach(function (x) {
+    (byMonth[x.month] = byMonth[x.month] || []).push(x);
+  });
+  const months = Object.keys(byMonth).sort().reverse().map(function (m) {
+    const live = byMonth[m].filter(function (x) { return x.alive; });
+    return {
+      month: m,
+      label: m.slice(0, 4) + '年' + Number(m.slice(5, 7)) + '月',
+      versions: byMonth[m],
+      latest: live.length ? live[0] : null
+    };
+  });
+  return { store: CFG.STORE_NAME, today: today_(), months: months };
+}
+
+/* ---------- 画面から呼ばれる入口 ---------- */
+
+function getFixList() { return guard_('getFixList', function () {
+  return fixPayload_();
+}); }
+
+function getFreezeState(month) { return guard_('getFreezeState', function () {
+  return freezeCheck_(String(month || today_()).slice(0, 7));
+}); }
+
+/**
+ * ★ 手で実行して、前月を確定します。画面から確定するのと同じ経路を通ります。
+ */
+function freezeLastMonth() {
+  const now = new Date();
+  const m = Utilities.formatDate(new Date(now.getFullYear(), now.getMonth() - 1, 1),
+                                 CFG.TZ, 'yyyy-MM');
+  const chk = freezeCheck_(m);
+  if (!chk.ok) {
+    console.log('［' + m + '］まだ確定できません：' + chk.reasons.join(' / '));
+    return chk;
+  }
+  clearExport();
+  startFreeze({ month: m, actor: '手動実行', note: chk.frozen ? '手動で作り直し' : '' });
+  let job = runExportChunk();
+  while (job && job.state === 'running') job = runExportChunk();
+  console.log(job && job.state === 'done'
+    ? '［' + m + '］第' + job.version + '版を確定しました: ' + job.pdfUrl
+    : '確定できませんでした: ' + ((job && job.message) || '理由不明'));
+  return job;
+}
