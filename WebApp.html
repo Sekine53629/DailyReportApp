@@ -612,6 +612,145 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 }
 .note-block b{display:block;color:var(--ink-2);font-family:var(--disp);
   font-size:12.5px;margin-bottom:3px}
+
+/* ============================================================
+   記録簿ビュー(監査用)
+   1か月ぶんを、帳票と同じ書式で週ごとに続けて表示する。
+   立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
+   ============================================================ */
+.lgview[hidden]{display:none}
+.lgview{max-width:1180px;margin:0 auto;padding:0 14px 60px}
+
+.lg-bar{
+  position:sticky;top:0;z-index:25;
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:0 -14px 14px;padding:10px 14px;
+  background:color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter:saturate(1.4) blur(8px);
+  border-bottom:1px solid var(--line);
+}
+.lg-bar .ttl{display:flex;flex-direction:column;line-height:1.25;margin-right:4px;min-width:0}
+.lg-bar .ttl b{font-family:var(--disp);font-weight:700;font-size:15px;white-space:nowrap}
+.lg-bar .ttl span{font-size:11px;color:var(--muted);letter-spacing:.06em}
+.lg-bar .sp{flex:1}
+.lg-month{
+  font-family:var(--mono);font-size:14px;font-weight:600;
+  min-width:7.2em;text-align:center;font-variant-numeric:tabular-nums;
+}
+.lg-dirtycnt{font-size:11.5px;font-weight:700;color:var(--warn)}
+.lg-dirtycnt:empty{display:none}
+
+/* 編集中は画面全体の見た目を変える。監査中に気づかず触ってしまう事故を防ぐため */
+.lgview.editing .lg-bar{
+  background:var(--warn-soft);
+  border-bottom-color:color-mix(in srgb,var(--warn) 45%,transparent);
+}
+.lgview.editing .lg-sheet{outline:2px solid var(--warn);outline-offset:2px}
+
+.lg-stats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.lg-stat{
+  flex:1;min-width:104px;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:9px 12px;box-shadow:var(--shadow);
+}
+.lg-stat .k{font-size:10.5px;letter-spacing:.08em;color:var(--muted);display:block}
+.lg-stat .v{
+  font-family:var(--mono);font-size:19px;font-weight:600;line-height:1.35;
+  font-variant-numeric:tabular-nums;
+}
+.lg-stat.ok   .v{color:var(--ok)}
+.lg-stat.warn .v{color:var(--warn)}
+.lg-stat.crit .v{color:var(--crit)}
+
+.lg-alerts[hidden]{display:none}
+.lg-alerts{
+  background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
+  border-radius:10px;padding:10px 13px;margin-bottom:14px;font-size:12px;line-height:1.7;
+}
+.lg-alerts b{display:block;font-family:var(--disp);color:var(--warn);font-size:12.5px;margin-bottom:3px}
+.lg-alerts .algrp{display:block;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+
+.lg-week{margin-bottom:20px}
+.lg-week > h3{
+  font-family:var(--disp);font-size:12px;font-weight:700;margin:0 0 6px;
+  color:var(--muted);letter-spacing:.06em;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+}
+.lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
+.lg-week > h3 .pg.right{margin-left:auto}
+
+/* 帳票そのもの。画面の1枚 = 印刷の1ページ */
+.lg-sheet{
+  background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
+  padding:10px;overflow-x:auto;box-shadow:var(--shadow);
+}
+
+/* 行の状態。監査で聞かれる「抜けはないか」が一目で分かるようにする */
+table.pv tr.lg-out  td{background:#fafbfa;color:#a6b0ac}   /* 当月外(前後の月) */
+table.pv tr.lg-fut  td{background:#fafbfa}                  /* まだ来ていない日 */
+table.pv tr.lg-miss td.dt{background:#fbeed8}               /* 未記録 */
+table.pv tr.lg-appr td.dt{background:#e7f2ea}               /* 承認済み */
+table.pv tr.lg-dirty td{background:#fff6dd}                 /* 未保存 */
+table.pv tr.lg-saving td{opacity:.5}
+
+table.pv td.dt .rowact{display:flex;gap:3px;justify-content:center;margin-top:3px}
+table.pv td.dt .rowact:empty{display:none}
+.rowbtn{
+  border:1px solid #b9c4bf;background:#fff;border-radius:5px;
+  padding:1px 6px;font-size:9px;font-weight:700;cursor:pointer;
+  font-family:var(--body);color:#41514b;line-height:1.6;
+}
+.rowbtn:hover{border-color:#0f766e;color:#0f766e}
+.rowbtn.go{background:#0f766e;border-color:#0f766e;color:#fff}
+
+/* 編集中のセル */
+table.pv td.ed{padding:0;background:#fffdf3}
+table.pv td.ed input{
+  width:100%;border:0;background:transparent;padding:3px 4px;
+  font-family:var(--mono);font-size:10.5px;text-align:right;color:#111614;
+}
+table.pv td.ed input:focus{outline:2px solid #0f766e;outline-offset:-2px;background:#fff}
+table.pv td.nt.ed{padding:1px}
+.notebtn{
+  width:100%;text-align:left;border:1px dashed #b9c4bf;border-radius:4px;background:#fff;
+  font-family:var(--body);font-size:8.5px;line-height:1.5;color:#111614;
+  padding:3px 5px;cursor:pointer;min-height:20px;
+}
+.notebtn:hover{border-color:#0f766e;color:#0f766e}
+table.pv td.st.ed{padding:1px}
+.stsel{
+  width:100%;border:1px solid #b9c4bf;border-radius:4px;background:#fff;
+  font-family:var(--body);font-size:9px;padding:2px 3px;color:#111614;
+}
+.stsel:focus{outline:2px solid #0f766e;outline-offset:-2px}
+
+/* 未承認の目印。印刷には出さない(帳票の書式を崩さないため) */
+table.pv td.st i.pend{
+  display:block;font-style:normal;font-size:6px;color:#b45309;font-weight:700;
+}
+
+.lg-note{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:10px;
+  padding:11px 13px;font-size:12px;color:var(--muted);line-height:1.7;margin-top:16px;
+}
+.lg-note b{display:block;color:var(--ink-2);font-family:var(--disp);font-size:12.5px;margin-bottom:3px}
+.lead-note{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.7}
+
+/* ============================================================
+   印刷(Ctrl+P で記録簿をそのまま刷るとき)
+   PDF出力ボタンは帳票テンプレート経由なので、こちらは補助的な経路。
+   ============================================================ */
+@media print{
+  .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
+  #boot,#demoBar,.footnote{display:none !important}
+  body{background:#fff}
+  .shell{padding:0}
+  .lgview{max-width:none;padding:0}
+  .lg-week{page-break-after:always;break-after:page;margin:0}
+  .lg-week:last-child{page-break-after:auto;break-after:auto}
+  .lg-week > h3{display:none}
+  .lg-sheet{border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important}
+  table.pv td.st i.pend{display:none}
+  @page{size:A4 landscape;margin:8mm}
+}
 </style>
 </head>
 <body>
@@ -628,6 +767,12 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
     <div class="pickme" id="pickMe" hidden>
       まず右上で担当者を選んでください。押印する名前が決まりません。
     </div>
+    <button class="iconbtn" id="btnLedger" title="記録簿（監査用）" aria-label="記録簿">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="4" y="3.5" width="16" height="17" rx="2"/>
+        <path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/>
+      </svg>
+    </button>
     <button class="iconbtn" id="btnPrint" title="帳票を出力" aria-label="帳票を出力">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M7 9V4h10v5"/>
@@ -761,6 +906,47 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
       </div>
     </div>
 
+  </div>
+</div>
+
+
+<!-- ============================================================
+     記録簿ビュー(監査用)
+     1か月ぶんを帳票と同じ書式で並べる。画面の1枚 = 印刷の1ページ。
+     ============================================================ -->
+<section class="lgview" id="ledger" hidden>
+  <div class="lg-bar">
+    <div class="ttl"><b id="lgStore">—</b><span>業務日報 記録簿</span></div>
+    <button class="navbtn" id="lgPrev" title="前の月へ">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>
+      <span>前の月</span>
+    </button>
+    <span class="lg-month" id="lgMonth">—</span>
+    <button class="navbtn" id="lgNext" title="次の月へ">
+      <span>次の月</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5"/></svg>
+    </button>
+    <span class="lg-dirtycnt" id="lgDirty"></span>
+    <div class="sp"></div>
+    <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
+    <button class="btn ghost" id="lgPrint">PDFを出力</button>
+    <button class="mini" id="lgClose">閉じる</button>
+  </div>
+
+  <div class="lg-stats" id="lgStats"></div>
+  <div class="lg-alerts" id="lgAlerts" hidden></div>
+  <div id="lgExport"></div>
+  <div id="lgBody"><div class="skeleton"></div></div>
+  <div id="lgFoot"></div>
+</section>
+
+<div class="overlay" id="xfOverlay" role="dialog" aria-modal="true" aria-labelledby="xfTitle">
+  <div class="sheet">
+    <div class="sheet-hd">
+      <h2 id="xfTitle">管理に関する事項</h2>
+      <button class="mini" id="xfClose">閉じる</button>
+    </div>
+    <div class="sheet-bd" id="xfBody"></div>
   </div>
 </div>
 
@@ -2009,14 +2195,10 @@ function weekCount_(from, to){
 /* 画面のプレビュー。
    固定の見た目を持たず、テンプレートシートの実寸(列幅・行高・見出し)を
    読んで描きます。シートを直せばここもそのまま追従します。 */
-function printTable_(d){
-  var L = d.layout;
-  if (!L) return '<div class="logempty">テンプレートが読めませんでした。</div>';
-
-  var R = d.ranges;
-  var C = L.col;
+/* 帳票の見出し(colgroup + thead)。プレビューと記録簿ビューで共用します */
+function pvHead_(L){
   var px = function(v){ return Math.round(v) + 'px'; };
-
+  var C = L.col;
   // 結合された見出しを復元する(空のセルは直前の見出しの続き)
   var groups = [];
   L.row1.forEach(function(txt, i){
@@ -2026,8 +2208,7 @@ function printTable_(d){
       groups[groups.length - 1].span++;
     }
   });
-
-  var head = '<colgroup>'
+  return '<colgroup>'
     + L.widths.map(function(w){ return '<col style="width:' + px(w) + '">'; }).join('')
     + '</colgroup><thead><tr style="height:' + px(L.heights[0]) + '">'
     + groups.map(function(g){
@@ -2038,6 +2219,17 @@ function printTable_(d){
     + '</tr><tr style="height:' + px(L.heights[1]) + '">'
     +   '<th class="subhd" colspan="' + (L.cols - C.NOTE + 1) + '">' + esc(L.sub) + '</th>'
     + '</tr></thead>';
+}
+
+function printTable_(d){
+  var L = d.layout;
+  if (!L) return '<div class="logempty">テンプレートが読めませんでした。</div>';
+
+  var R = d.ranges;
+  var C = L.col;
+  var px = function(v){ return Math.round(v) + 'px'; };
+
+  var head = pvHead_(L);
 
   // 未記入の日はテンプレートの下地(℃　/ と %)をそのまま出す
   var cell = function(v, r, unit, dec){
@@ -2122,6 +2314,542 @@ function jobTitle_(){
   return a[0] + a[1] + a[2] + '-' + b[0] + b[1] + b[2];
 }
 
+
+
+/* ============================================================
+   記録簿ビュー(監査用)
+
+   ・保健所などの立入検査で、その場で見せられる画面です。
+     1か月ぶんを、帳票と同じ書式で週ごとに続けて表示します。
+     画面の1枚 = 印刷の1ページ なので、見た目のズレが起きません。
+   ・既定は閲覧専用です。「編集」を押したときだけ値を直せます。
+     監査中にうっかり書き換えてしまう事故を防ぐためで、
+     編集中は画面の色が変わります。
+   ・印刷は既存のPDF出力(帳票テンプレート経由)をそのまま呼びます。
+   ============================================================ */
+var LG = { data:null, edit:false, busy:false, dirty:{}, job:null, xfDate:null };
+var $lg = document.getElementById('ledger');
+
+/* ---------- 開閉 ---------- */
+function lgOpen(anchor){
+  document.getElementById('main').hidden = true;
+  $lg.hidden = false;
+  LG.edit = false; LG.dirty = {}; LG.job = null;
+  window.scrollTo(0, 0);
+  lgLoad(anchor || (S.week ? S.week.today : null));
+}
+
+function lgClose(){
+  if (lgDirtyCount() &&
+      !confirm('保存していない行が ' + lgDirtyCount() + ' 件あります。破棄して閉じますか？')) return;
+  LG.dirty = {}; LG.edit = false;
+  $lg.hidden = true;
+  document.getElementById('main').hidden = false;
+  // 記録簿で直した内容を、日別の画面にも反映させる
+  call('getWeekState', [S.sel || null], function(d){ apply(d); refreshMissing(); }, function(){});
+}
+
+function lgLoad(anchor){
+  document.getElementById('lgBody').innerHTML = '<div class="skeleton"></div>';
+  call('getLedger', [anchor || null], function(d){
+    LG.data = d; LG.dirty = {};
+    lgRender();
+  }, fail);
+}
+
+function lgNav(anchor){
+  if (!anchor) return;
+  if (lgDirtyCount() && !confirm('保存していない行があります。移動しますか？')) return;
+  LG.dirty = {};
+  lgLoad(anchor);
+}
+
+/* ---------- 小道具 ---------- */
+function lgDirtyCount(){ return Object.keys(LG.dirty).length; }
+
+/** 元の値に、まだ保存していない編集を重ねたもの */
+function lgVal(r){ return Object.assign({}, r, LG.dirty[r.date] || {}); }
+
+/** 管理に関する事項を1行にまとめる(サーバー側の xferLine_ と同じ並び) */
+function lgNoteOf(v){
+  return XFER.map(function(f){ return String(v[f.key] || '').trim(); })
+             .filter(function(x){ return x; }).join('／');
+}
+
+function lgRow(date){
+  var d = LG.data, hit = null;
+  if (!d) return null;
+  d.weeks.forEach(function(w){
+    w.rows.forEach(function(r){ if (r.date === date) hit = r; });
+  });
+  return hit;
+}
+
+/* ---------- 行の操作ボタン ---------- */
+function lgActs_(r){
+  if (!LG.edit || !r || !r.inMonth || r.future) return '';
+  if (LG.dirty[r.date]){
+    return '<button class="rowbtn go" data-act="save" data-date="' + r.date + '">保存</button>'
+         + '<button class="rowbtn" data-act="undo" data-date="' + r.date + '">取消</button>';
+  }
+  if (r.state === 'saved' && canApprove(r.date)){
+    return '<button class="rowbtn" data-act="approve" data-date="' + r.date + '">承認</button>';
+  }
+  // 誤って承認したときの戻し道。現在の管理薬剤師だけが押せます
+  if (r.approved && canApprove(r.date)){
+    return '<button class="rowbtn" data-act="unapprove" data-date="' + r.date + '">承認解除</button>';
+  }
+  return '';
+}
+
+/* 打っている最中に作り直すとフォーカスが飛ぶので、
+   値を変えたときは行の見た目だけを更新する */
+function lgSet(date, key, val){
+  if (!LG.dirty[date]) LG.dirty[date] = {};
+  LG.dirty[date][key] = val;
+  lgMark(date);
+}
+
+function lgMark(date){
+  Array.prototype.forEach.call(
+    document.querySelectorAll('tr[data-date="' + date + '"]'),
+    function(tr){ tr.classList.add('lg-dirty'); });
+  var box = document.getElementById('act_' + date);
+  if (box) box.innerHTML = lgActs_(lgRow(date));
+  lgBar();
+}
+
+function lgBusy(date, on){
+  Array.prototype.forEach.call(
+    document.querySelectorAll('tr[data-date="' + date + '"]'),
+    function(tr){ tr.classList.toggle('lg-saving', !!on); });
+}
+
+/* ---------- 保存・取消・承認 ---------- */
+function lgSave(date){
+  var r = lgRow(date);
+  if (!r || LG.busy) return;
+  if (!S.me){ needStaff(true); toast('担当者を選んでから保存してください', true); return; }
+
+  var v = lgVal(r);
+  var payload = { date:date, actor:S.me, rowStaff: v.staff || S.me, force:false };
+  var miss = [], outOf = [];
+
+  FIELDS.forEach(function(f){
+    var raw = v[f.key];
+    if (raw === '' || raw === null || raw === undefined){ miss.push(f.label); return; }
+    var n = parseFloat(raw);
+    if (isNaN(n) || n < f.min || n > f.max){ miss.push(f.label); return; }
+    if (f.range && (n < f.range[0] || n > f.range[1])) outOf.push(f.label);
+    payload[f.key] = n;
+  });
+  if (miss.length){
+    toast(jp(date) + '：' + miss.join('・') + ' が未入力です', true);
+    return;
+  }
+  XFER.forEach(function(f){ payload[f.key] = String(v[f.key] || '').trim(); });
+
+  if (outOf.length &&
+      !confirm(jp(date) + '\n' + outOf.join('・') + ' が管理基準を外れています。\nこの値のまま記録しますか？')){
+    return;
+  }
+
+  // 承認済みを直すときは、必ずここで断りを入れる
+  if (r.approved){
+    if (!confirm(
+      jp(date) + ' は承認済みです。\n\n' +
+      '修正すると次の2つが起きます。\n' +
+      '  ・承認が解除され、管理薬剤師の再承認が必要になります\n' +
+      '  ・変更前後の値が変更履歴に記録されます\n\n続けますか？')) return;
+    payload.force = true;
+  }
+
+  LG.busy = true;
+  lgBusy(date, true);
+  call('saveLedgerDay', [payload], function(d){
+    LG.busy = false;
+    LG.data = d;
+    delete LG.dirty[date];
+    lgRender();
+    toast(jp(date) + ' を保存しました');
+  }, function(e){
+    LG.busy = false; lgBusy(date, false); fail(e);
+  });
+}
+
+function lgUndo(date){
+  delete LG.dirty[date];
+  lgRender();
+}
+
+function lgApprove(date){
+  if (LG.busy) return;
+  if (!S.me){ needStaff(true); toast('担当者を選んでください', true); return; }
+  if (!confirm(jp(date) + ' の記録を承認します。よろしいですか？')) return;
+  LG.busy = true;
+  call('approveLedgerDay', [{ date:date, admin:S.me }], function(d){
+    LG.busy = false; LG.data = d; lgRender(); toast('承認しました');
+  }, function(e){ LG.busy = false; fail(e); });
+}
+
+/* ---------- 管理に関する事項(譲渡記録) ----------
+   8つの列に分かれているので、1行の文字列として直させると
+   元の列に戻せなくなります。そのため小さな画面を開いて項目ごとに入れます。 */
+function lgUnapprove(date){
+  if (LG.busy) return;
+  if (!S.me){ needStaff(true); toast('担当者を選んでください', true); return; }
+  if (!confirm(jp(date) + ' の承認を取り消します。\n管理者印は外れ、再承認が必要になります。\nよろしいですか？')) return;
+  LG.busy = true;
+  call('unapproveLedgerDay', [{ date:date, admin:S.me }], function(d){
+    LG.busy = false; LG.data = d; lgRender(); toast('承認を取り消しました');
+  }, function(e){ LG.busy = false; fail(e); });
+}
+
+function lgOpenXfer(date){
+  var r = lgRow(date);
+  if (!r) return;
+  var v = lgVal(r);
+  LG.xfDate = date;
+
+  document.getElementById('xfTitle').textContent =
+    jp(date) + '（' + r.dow + '）管理に関する事項';
+
+  document.getElementById('xfBody').innerHTML =
+      '<p class="lead-note">医薬品の譲渡・譲受があった日だけ記入します。'
+    + '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</p>'
+    + '<div class="xfer-body">'
+    + XFER.map(function(f){
+        var val = v[f.key] == null ? '' : String(v[f.key]);
+        var input;
+        if (f.type === 'select'){
+          input = '<select id="xf_' + f.key + '"><option value=""></option>'
+                + f.choices.map(function(c){
+                    return '<option' + (c === val ? ' selected' : '') + '>' + esc(c) + '</option>';
+                  }).join('')
+                + '</select>';
+        } else {
+          input = '<div class="inputwrap"><input id="xf_' + f.key + '" type="'
+                + (f.type === 'month' ? 'month' : 'text') + '" value="' + esc(val) + '"></div>';
+        }
+        return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+             + '<label for="xf_' + f.key + '">' + esc(f.label) + '</label>' + input + '</div>';
+      }).join('')
+    + '</div>'
+    + '<div class="actions">'
+    +   '<button class="btn primary" id="xfOk">反映する</button>'
+    +   '<button class="btn ghost" id="xfClear">記載なしにする</button>'
+    + '</div>';
+
+  document.getElementById('xfOverlay').classList.add('open');
+
+  document.getElementById('xfOk').addEventListener('click', function(){
+    XFER.forEach(function(f){
+      var el = document.getElementById('xf_' + f.key);
+      lgSet(LG.xfDate, f.key, el ? String(el.value).trim() : '');
+    });
+    lgCloseXfer();
+    lgRender();
+  });
+  document.getElementById('xfClear').addEventListener('click', function(){
+    XFER.forEach(function(f){ lgSet(LG.xfDate, f.key, ''); });
+    lgCloseXfer();
+    lgRender();
+  });
+}
+function lgCloseXfer(){ document.getElementById('xfOverlay').classList.remove('open'); }
+
+/* ---------- 表(帳票と同じ書式) ---------- */
+function lgTable_(week){
+  var d = LG.data, Lay = d.layout;
+  if (!Lay) return '';
+  var C = Lay.col, R = d.ranges;
+  var px = function(x){ return Math.round(x) + 'px'; };
+  var span = Lay.cols - C.NOTE + 1;
+
+  var blank = function(n){ var o = ''; for (var i = 0; i < n; i++) o += '<td></td>'; return o; };
+
+  var stamp = function(name, pending){
+    if (!name) return '<td class="st"></td>';
+    var u = d.seals[name];
+    return '<td class="st">' + (u ? '<img src="' + u + '" alt="">' : '')
+         + '<span>' + esc(name) + '</span>'
+         + (pending ? '<i class="pend">未承認</i>' : '') + '</td>';
+  };
+
+  var body = week.rows.map(function(r, i){
+    var v  = lgVal(r);
+    var ed = LG.edit && r.inMonth && !r.future;
+    var hUp = Lay.heights[Lay.headRows + i * Lay.rowsPerDay];
+    var hLo = Lay.heights[Lay.headRows + i * Lay.rowsPerDay + 1];
+
+    var cls = [];
+    if (!r.inMonth)      cls.push('lg-out');
+    else if (r.future)   cls.push('lg-fut');
+    else if (!r.filled)  cls.push('lg-miss');
+    else if (r.approved) cls.push('lg-appr');
+    if (LG.dirty[r.date]) cls.push('lg-dirty');
+    var attr = ' data-date="' + r.date + '" class="' + cls.join(' ') + '"';
+
+    // 枚数・件数
+    var n = function(key, step){
+      var val = (v[key] === null || v[key] === undefined) ? '' : v[key];
+      if (!ed) return '<td class="n">' + ((r.filled && val !== '') ? esc(val) : '') + '</td>';
+      return '<td class="n ed"><input type="number" step="' + step + '"'
+           + ' data-d="' + r.date + '" data-k="' + key + '" value="' + esc(val) + '"></td>';
+    };
+
+    // 温度・湿度。未記入の日はテンプレートの下地(℃　/ や %)をそのまま出す
+    var e = function(key, range, ph, dec){
+      var val = v[key];
+      if (ed){
+        return '<td class="e ed"><input type="number" step="' + (dec ? '0.1' : '1') + '"'
+             + ' data-d="' + r.date + '" data-k="' + key + '"'
+             + ' value="' + ((val === null || val === undefined) ? '' : esc(val)) + '"></td>';
+      }
+      if (val === null || val === undefined || val === '') return '<td class="e">' + esc(ph) + '</td>';
+      var ng = range && (val < range[0] || val > range[1]);
+      return '<td class="e' + (ng ? ' ng' : '') + '">' + Number(val).toFixed(dec) + esc(ph) + '</td>';
+    };
+
+    var dt = '<td class="dt" rowspan="' + Lay.rowsPerDay + '">'
+      + r.date.replace(/-/g, '/') + '<b>' + r.dow + '</b>' + esc(r.hours)
+      + '<span class="rowact" id="act_' + r.date + '">' + lgActs_(r) + '</span>'
+      + '</td>';
+
+    var note = ed
+      ? '<td class="nt ed" colspan="' + span + '">'
+        + '<button class="notebtn" data-act="xfer" data-date="' + r.date + '">'
+        + (lgNoteOf(v) ? esc(lgNoteOf(v)) : '＋ 譲渡・譲受を記入') + '</button></td>'
+      : '<td class="nt" colspan="' + span + '">' + esc(lgNoteOf(v)) + '</td>';
+
+    // 入力者と、その日の担当者は別人のことがある。
+    // 代わりに入れた人の名前で押印しないよう、編集中は選べるようにする
+    var stStaff = ed
+      ? '<td class="st ed"><select class="stsel" data-d="' + r.date + '" data-k="staff">'
+        + '<option value=""></option>'
+        + activeStaff().map(function(x){
+            return '<option' + (x.name === v.staff ? ' selected' : '') + '>' + esc(x.name) + '</option>';
+          }).join('')
+        + '</select></td>'
+      : stamp(r.staff, false);
+    var stAdmin = stamp(r.admin, r.filled && !r.approved);
+
+    return '<tr' + attr + ' style="height:' + px(hUp) + '">'
+      + dt
+      + n('rx', '1')
+      + '<td class="u">' + esc(Lay.unitRx) + '</td>'
+      + n('inquiry', '1')
+      + '<td class="u">' + esc(Lay.unitInq) + '</td>'
+      + blank(C.ROOM_T - C.INQ - 2)
+      + e('roomTemp',  R.ROOM_TEMP,  Lay.phTemp,  1)
+      + e('roomHumid', R.ROOM_HUMID, Lay.phHumid, 0)
+      + e('coldTemp',  R.COLD_TEMP,  Lay.phTemp,  1)
+      + e('coldHumid', R.COLD_HUMID, Lay.phHumid, 0)
+      + (C.STAFF < C.ADMIN ? stStaff + stAdmin : stAdmin + stStaff)
+      + '</tr>'
+      + '<tr' + attr + ' style="height:' + px(hLo) + '">' + note + '</tr>';
+  }).join('');
+
+  return '<table class="pv" style="width:'
+    + px(Lay.widths.reduce(function(a, b){ return a + b; }, 0)) + '">'
+    + pvHead_(Lay) + '<tbody>' + body + '</tbody></table>';
+}
+
+/* ---------- 画面全体 ---------- */
+function lgStat_(k, v, cls){
+  return '<div class="lg-stat ' + (cls || '') + '">'
+       + '<span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';
+}
+
+function lgBar(){
+  var n = lgDirtyCount();
+  document.getElementById('lgDirty').textContent = n ? ('未保存 ' + n + ' 行') : '';
+}
+
+function lgRender(){
+  var d = LG.data;
+  if (!d) return;
+
+  $lg.classList.toggle('editing', LG.edit);
+  document.getElementById('lgStore').textContent = d.store;
+  document.getElementById('lgMonth').textContent = d.monthLabel;
+  document.getElementById('lgNext').disabled = !d.nextMonth;
+
+  var eb = document.getElementById('lgEdit');
+  eb.setAttribute('aria-pressed', LG.edit ? 'true' : 'false');
+  eb.textContent = LG.edit ? '編集中' : '編集';
+
+  var s = d.stat;
+  var target = s.days - s.future;          // まだ来ていない日は分母から外す
+  document.getElementById('lgStats').innerHTML =
+      lgStat_('対象日数', s.days + ' 日', '')
+    + lgStat_('記録あり', s.filled + ' / ' + target + ' 日', s.missing ? 'warn' : 'ok')
+    + lgStat_('承認済み', s.approved + ' 日',
+        (s.filled && s.approved === s.filled) ? 'ok' : (s.filled ? 'warn' : ''))
+    + lgStat_('未記録', s.missing + ' 日', s.missing ? 'crit' : 'ok')
+    + lgStat_('基準逸脱', s.alerts + ' 件', s.alerts ? 'warn' : 'ok');
+
+  var al = document.getElementById('lgAlerts');
+  al.hidden = !d.alerts.length;
+  al.innerHTML = d.alerts.length
+    ? '<b>管理基準を外れた記録（' + d.alerts.length + ' 日）</b>'
+      + d.alerts.map(function(a){
+          return '<span class="algrp">' + a.date.slice(5).replace('-', '/') + '(' + a.dow + ')　'
+            + a.items.map(function(x){
+                return esc(x.label) + ' ' + x.value + '（基準 ' + x.min + '〜' + x.max + '）';
+              }).join('、') + '</span>';
+        }).join('')
+    : '';
+
+  if (!d.hasTemplate){
+    document.getElementById('lgBody').innerHTML =
+        '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
+      + 'スクリプトエディタで buildTemplate を1回実行してください。'
+      + '実行すると「帳票テンプレート」シートが作られ、この画面に実際の書式で表示されます。'
+      + '</div></div>';
+  } else {
+    document.getElementById('lgBody').innerHTML = d.weeks.map(function(w, i){
+      return '<section class="lg-week">'
+        + '<h3>第' + (i + 1) + '週'
+        +   '<span class="pg">' + w.start.replace(/-/g, '/') + ' 〜 '
+        +     w.end.slice(5).replace('-', '/') + '</span>'
+        +   '<span class="pg right">印刷 ' + (i + 1) + ' / ' + d.weeks.length + ' ページ</span>'
+        + '</h3>'
+        + '<div class="lg-sheet">' + lgTable_(w) + '</div>'
+        + '</section>';
+    }).join('');
+  }
+
+  document.getElementById('lgFoot').innerHTML =
+      '<div class="lg-note"><b>この画面について</b>'
+    + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。'
+    + '「PDFを出力」を押すと、ドライブの「業務日報_出力」フォルダに'
+    + d.monthLabel + '分（' + d.weeks.length + 'ページ）が保存されます。<br>'
+    + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
+    + '直したあとは管理薬剤師の再承認が必要です。</div>';
+
+  lgRenderExport();
+  lgBar();
+}
+
+/* ---------- PDF出力(既存の帳票出力をそのまま呼ぶ) ---------- */
+function lgExport(){
+  var d = LG.data;
+  if (!d || LG.busy) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+  if (!confirm(d.monthLabel + '分（' + d.weeks.length + 'ページ）のPDFを出力します。\nよろしいですか？')) return;
+
+  LG.busy = true;
+  LG.job = { state:'running', done:0, weeks:d.weeks.map(function(w){ return w.start; }), title:'' };
+  lgRenderExport();
+
+  call('startExport', [{
+    from: d.monthStart, to: d.monthEnd,
+    title: d.monthLabel + '分', actor: S.me
+  }], function(job){
+    LG.job = job;
+    lgRenderExport();
+    lgPump();
+  }, function(e){ LG.busy = false; LG.job = null; lgRenderExport(); fail(e); });
+}
+
+function lgPump(){
+  call('runExportChunk', [], function(job){
+    LG.job = job;
+    lgRenderExport();
+    if (job && job.state === 'running'){
+      setTimeout(lgPump, 400);
+    } else {
+      LG.busy = false;
+      if (job && job.state === 'done') toast('PDFを出力しました');
+    }
+  }, function(e){ LG.busy = false; fail(e); lgRenderExport(); });
+}
+
+function lgRenderExport(){
+  var box = document.getElementById('lgExport');
+  var j = LG.job;
+  if (!j){ box.innerHTML = ''; return; }
+
+  if (j.state === 'running'){
+    var total = (j.weeks && j.weeks.length) || 1;
+    var pct = Math.round(j.done / total * 100);
+    box.innerHTML = '<div class="progress"><div class="bar"><i style="width:' + pct + '%"></i></div>'
+      + '<div class="txt">' + j.done + ' / ' + total + ' 週 完了'
+      + '（この画面を開いたまま少しお待ちください）</div></div>';
+  } else if (j.state === 'done'){
+    box.innerHTML = '<div class="donebox"><b>PDFを出力しました</b>'
+      + esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）を'
+      + 'ドライブの「業務日報_出力」フォルダに保存しました。'
+      + '<div style="margin-top:6px"><a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a></div>'
+      + '</div>';
+  } else {
+    box.innerHTML = '';
+  }
+}
+
+/* ---------- 配線 ---------- */
+document.getElementById('btnLedger').addEventListener('click', function(){ lgOpen(); });
+document.getElementById('lgClose').addEventListener('click', lgClose);
+document.getElementById('lgPrint').addEventListener('click', lgExport);
+document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
+document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
+
+document.getElementById('lgEdit').addEventListener('click', function(){
+  if (!LG.edit){
+    if (!S.me){
+      needStaff(true);
+      toast('編集するには、まず担当者を選んでください', true);
+      return;
+    }
+    LG.edit = true;
+  } else {
+    if (lgDirtyCount() &&
+        !confirm('保存していない行が ' + lgDirtyCount() + ' 件あります。破棄して閲覧に戻りますか？')) return;
+    LG.dirty = {};
+    LG.edit = false;
+  }
+  lgRender();
+});
+
+/* 表は作り直しが多いので、個別に付けずにまとめて拾う */
+function lgOnEdit_(ev){
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var date = el.getAttribute('data-d');
+  var key  = el.getAttribute('data-k');
+  if (date && key) lgSet(date, key, el.value);
+}
+document.getElementById('lgBody').addEventListener('input', lgOnEdit_);
+document.getElementById('lgBody').addEventListener('change', lgOnEdit_);
+
+document.getElementById('lgBody').addEventListener('click', function(ev){
+  var b = ev.target;
+  while (b && b !== this && !b.getAttribute('data-act')) b = b.parentNode;
+  if (!b || b === this) return;
+  var act  = b.getAttribute('data-act');
+  var date = b.getAttribute('data-date');
+  if (act === 'save')         lgSave(date);
+  else if (act === 'undo')    lgUndo(date);
+  else if (act === 'approve') lgApprove(date);
+  else if (act === 'unapprove') lgUnapprove(date);
+  else if (act === 'xfer')    lgOpenXfer(date);
+});
+
+document.getElementById('xfClose').addEventListener('click', lgCloseXfer);
+document.getElementById('xfOverlay').addEventListener('click', function(ev){
+  if (ev.target === this) lgCloseXfer();
+});
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape' && document.getElementById('xfOverlay').classList.contains('open')){
+    lgCloseXfer();
+  }
+});
+
+window.addEventListener('beforeunload', function(ev){
+  if (lgDirtyCount()){ ev.preventDefault(); ev.returnValue = ''; }
+});
 
 /* ============================================================
    プレビュー用のダミーデータ
@@ -2308,11 +3036,144 @@ var MOCK = (function(){
     };
   }
 
+  // 実物のテンプレートを模した寸法(本番はシートから読み取ります)
+  var LAYOUT = {
+    cols: 12, headRows: 2, rowsPerDay: 2,
+    widths: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+    heights: [42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42],
+    row1: ['日付\n営業時間','処方箋枚数','','疑義照会件数','','管理に関する事項',
+           '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],
+    sub: '譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/包装形態/譲渡数/Lot/使用期限',
+    unitRx: '枚', unitInq: '件', phTemp: '℃　/', phHumid: '%',
+    col: { DATE:1, RX:2, INQ:4, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
+           STAFF:11, ADMIN:12, NOTE:2 }
+  };
+
   return {
     setAuthMode: function(m){ authMode = m; },
     setDemoRegistered: function(v){ demoRegistered = v; },
 
     getWeekState: function(anchor){ return week(anchor); },
+
+    /* ---------- 記録簿ビュー ---------- */
+    getLedger: function(anchor){
+      var a = (anchor && anchor <= todayIso) ? anchor : todayIso;
+      var mStart = a.slice(0,7) + '-01';
+      var mp = mStart.split('-');
+      var mEnd = iso(new Date(+mp[0], +mp[1], 0));
+
+      var seals = {};
+      staff.forEach(function(x){ if (x.sealUrl) seals[x.name] = x.sealUrl; });
+
+      var RG = { roomTemp:[1,30], roomHumid:[30,70], coldTemp:[2,8], coldHumid:null };
+      var LB = { roomTemp:'調剤室温度', roomHumid:'調剤室湿度',
+                 coldTemp:'冷所温度',   coldHumid:'冷所湿度' };
+
+      var stat = { days:0, filled:0, approved:0, missing:0, alerts:0, future:0 };
+      var alerts = [];
+      var weeks = [];
+      var w = iso(weekTopOf(mStart));
+      var lastW = iso(weekTopOf(mEnd));
+      var guard = 0;
+
+      while (w <= lastW && guard++ < 10){
+        var rows = daysOf(w).map(function(day){
+          var s = store[day.date] || { state:'empty' };
+          var r = Object.assign({
+            date: day.date, dow: day.dow, hours:'10:00〜20:00',
+            rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
+            xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+            staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:''
+          }, s);
+
+          r.filled   = (r.state === 'saved' || r.state === 'approved');
+          r.approved = (r.state === 'approved');
+          r.approver = r.admin;
+          r.chief    = chiefOn(day.date);
+          r.admin    = r.admin || r.chief;
+          r.note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
+            .map(function(k){ return r[k]; }).filter(function(x){ return x; }).join('／');
+          r.inMonth = (day.date >= mStart && day.date <= mEnd);
+          r.future  = (day.date > todayIso);
+
+          r.alerts = [];
+          Object.keys(RG).forEach(function(k){
+            var rg = RG[k];
+            if (rg && r[k] !== null && r[k] !== undefined && (r[k] < rg[0] || r[k] > rg[1])){
+              r.alerts.push({ key:k, label:LB[k], value:r[k], min:rg[0], max:rg[1] });
+            }
+          });
+
+          if (r.inMonth){
+            stat.days++;
+            if (r.future) stat.future++;
+            else if (r.filled){ stat.filled++; if (r.approved) stat.approved++; }
+            else stat.missing++;
+            if (r.alerts.length){
+              stat.alerts += r.alerts.length;
+              alerts.push({ date:r.date, dow:r.dow, items:r.alerts });
+            }
+          }
+          return r;
+        });
+        weeks.push({ start:w, end: addDays(w, 6), rows: rows });
+        w = addDays(w, 7);
+      }
+
+      var nextFirst = addDays(mEnd, 1);
+      return {
+        store:'くるむ薬局 札幌店', storeCode:'SPK', today: todayIso,
+        month: mStart.slice(0,7),
+        monthLabel: mStart.slice(0,4) + '年' + Number(mStart.slice(5,7)) + '月',
+        monthStart: mStart, monthEnd: mEnd,
+        prevMonth: addDays(mStart, -1),
+        nextMonth: (nextFirst.slice(0,7) > todayIso.slice(0,7)) ? '' : nextFirst,
+        hours:'10:00〜20:00',
+        ranges:{ ROOM_TEMP:[1,30], ROOM_HUMID:[30,70], COLD_TEMP:[2,8], COLD_HUMID:null },
+        layout: LAYOUT, hasTemplate: true, seals: seals,
+        weeks: weeks, stat: stat, alerts: alerts
+      };
+    },
+
+    saveLedgerDay: function(p){
+      var prev = store[p.date] || {};
+      var was = (prev.state === 'approved');
+      if (was && !p.force) throw new Error('承認済みの日です');
+      var now = new Date();
+      var hh = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      store[p.date] = {
+        state:'saved',
+        rx:p.rx, inquiry:p.inquiry,
+        roomTemp:p.roomTemp, roomHumid:p.roomHumid,
+        coldTemp:p.coldTemp, coldHumid:p.coldHumid,
+        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
+        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        staff: p.rowStaff || prev.staff || p.actor,
+        savedAt: hh, admin:'', approvedAt:''
+      };
+      push(was ? '承認済みの日報を修正（承認を解除）' : '日報を修正（記録簿）',
+           p.date, p.actor);
+      return MOCK.getLedger(p.date);
+    },
+
+    approveLedgerDay: function(p){
+      var r = store[p.date];
+      if (!r) throw new Error('記録がありません');
+      var now = new Date();
+      r.state = 'approved';
+      r.admin = p.admin;
+      r.approvedAt = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      return MOCK.getLedger(p.date);
+    },
+
+    unapproveLedgerDay: function(p){
+      var r = store[p.date];
+      if (!r) throw new Error('記録がありません');
+      r.state = 'saved'; r.admin = ''; r.approvedAt = '';
+      push('承認を取り消し', p.date, p.admin);
+      return MOCK.getLedger(p.date);
+    },
+
 
     findMissing: function(span){
       var n = Number(span) || 60, out = [];
@@ -2332,18 +3193,7 @@ var MOCK = (function(){
       var seals = {};
       staff.forEach(function(x){ if (x.sealUrl) seals[x.name] = x.sealUrl; });
       var w = week(anchor);
-      // 実物のテンプレートを模した寸法(本番はシートから読み取ります)
-      var layout = {
-        cols: 12, headRows: 2, rowsPerDay: 2,
-        widths: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
-        heights: [42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42],
-        row1: ['日付\n営業時間','処方箋枚数','','疑義照会件数','','管理に関する事項',
-               '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],
-        sub: '譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/包装形態/譲渡数/Lot/使用期限',
-        unitRx: '枚', unitInq: '件', phTemp: '℃　/', phHumid: '%',
-        col: { DATE:1, RX:2, INQ:4, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
-               STAFF:11, ADMIN:12, NOTE:2 }
-      };
+      var layout = LAYOUT;
       return {
         layout: layout,
         store:'くるむ薬局 札幌店',
