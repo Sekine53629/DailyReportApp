@@ -584,6 +584,9 @@ button,input,select{font:inherit;color:inherit}
 .formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
 
 /* ---- 帳票の出力(独立した画面) ---- */
+/* 帳票そのものに幅を回したいので、枠の内側は詰める */
+#viewExport .card-bd{padding:12px}
+@media (max-width:640px){ #viewExport .card-bd{padding:8px} }
 .presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .range input[type="date"]{
@@ -597,8 +600,13 @@ button,input,select{font:inherit;color:inherit}
   background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
   padding:10px;overflow-x:auto;margin-bottom:6px;
 }
-/* シートの実寸で描くため、横に収まらないときは中で横スクロールする */
-.pvwrap table.pv{margin:0 auto}
+/* シートの実寸で描く。画面に収まらないときは縮めて全体を見せる
+   (拡大はしない。実寸より大きいと、刷ったときの印象とずれるため) */
+.pvwrap table.pv{margin:0 auto;transform-origin:top left}
+.pvwrap.fit{overflow-x:hidden}
+.pvwrap.fit table.pv{margin:0}
+.pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
+.pvscale:empty{display:none}
 table.pv{border-collapse:collapse;table-layout:fixed;font-size:10px}
 table.pv th,table.pv td{border:1px solid #2b3330;padding:2px 4px;vertical-align:middle}
 table.pv th{background:#f4f6f5;font-family:var(--disp);font-size:8.5px;text-align:center;
@@ -657,7 +665,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
    ============================================================ */
 .lgview[hidden]{display:none}
-.lgview{max-width:1180px;margin:0 auto;padding:0 14px 60px}
+.lgview{max-width:1440px;margin:0 auto;padding:0 14px 60px}
 
 .lg-bar{
   position:sticky;top:0;z-index:25;
@@ -2225,7 +2233,8 @@ function renderPrint(){
   h += '<p class="pvnote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
      + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
 
-  h += '<div class="pvwrap">' + printTable_(d) + '</div>';
+  h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
+     + '<p class="pvscale" id="pvScale"></p>';
 
   if (P.job && P.job.state === 'running'){
     var pct = Math.round(P.job.done / P.job.weeks.length * 100);
@@ -2247,7 +2256,42 @@ function renderPrint(){
 
   document.getElementById('pvBody').innerHTML = h;
   wirePrint_();
+  fitPreview_();
 }
+
+/* 帳票は列幅の合計が1000pxを超えるので、画面によっては入りきりません。
+   はみ出す分だけ縮めて、1週間の全体が一目で分かるようにします。
+   縮めたときは、その倍率を下に出します(刷るのは常に原寸) */
+function fitPreview_(){
+  var wrap = document.getElementById('pvWrap');
+  var note = document.getElementById('pvScale');
+  if (!wrap) return;
+  var tbl = wrap.querySelector('table.pv');
+  if (!tbl) return;
+
+  // いったん元に戻してから測る
+  wrap.classList.remove('fit');
+  wrap.style.height = '';
+  tbl.style.transform = '';
+  if (note) note.textContent = '';
+
+  var avail = wrap.clientWidth - 20;      // .pvwrap の内側の余白ぶん
+  var w = tbl.offsetWidth;
+  if (!w || !avail || w <= avail) return; // 収まっているならそのまま
+
+  var k = avail / w;
+  tbl.style.transform = 'scale(' + k.toFixed(4) + ')';
+  wrap.style.height = Math.ceil(tbl.offsetHeight * k) + 'px';
+  wrap.classList.add('fit');
+  if (note){
+    note.textContent = '画面の幅に合わせて ' + Math.round(k * 100) + '% で表示しています。'
+      + '印刷・PDFは原寸です。';
+  }
+}
+
+window.addEventListener('resize', function(){
+  if (VIEW === 'export') fitPreview_();
+});
 
 function preset(label, key){
   return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
@@ -2391,6 +2435,42 @@ function printTable_(d){
     + '">' + head + '<tbody>' + body + '</tbody></table>';
 }
 
+/* ---------- 出力の進み具合 ----------
+   1回の呼び出しで何週分もまとめて作るため、そのあいだ画面は止まって見えます。
+   かといって週ごとに呼び分けると、往復と下準備が増えて全体はかえって遅くなります。
+   そこで、作るのは今までどおりまとめて行い、進み具合だけを別に問い合わせます。
+   getExportStatus は保存済みの進捗を読むだけなので、出力そのものは遅くなりません。 */
+var JOBPOLL = { timer:null };
+
+function pollJob_(alive, onTick){
+  stopPollJob_();
+  var tick = function(){
+    if (!alive()){ stopPollJob_(); return; }
+    call('getExportStatus', [], function(j){
+      if (!alive()){ stopPollJob_(); return; }
+      if (j && j.state === 'running') onTick(j);
+      JOBPOLL.timer = setTimeout(tick, 2000);
+    }, function(){ JOBPOLL.timer = setTimeout(tick, 3000); });
+  };
+  JOBPOLL.timer = setTimeout(tick, 1500);
+}
+
+function stopPollJob_(){
+  if (JOBPOLL.timer){ clearTimeout(JOBPOLL.timer); JOBPOLL.timer = null; }
+}
+
+/* 画面を作り直すと入力の途中が消えるので、バーと文字だけ差し替える */
+function updateProgress_(job){
+  if (!job || !job.weeks) return;
+  var bar = document.querySelector('.progress .bar i');
+  var txt = document.querySelector('.progress .txt');
+  if (!bar || !txt) return;
+  var total = job.weeks.length || 1;
+  bar.style.width = Math.round(job.done / total * 100) + '%';
+  txt.textContent = job.done + ' / ' + total + ' 週 完了'
+    + '（この画面を開いたまま少しお待ちください）';
+}
+
 /* 出力。6分の上限があるので、終わるまで小分けに呼び続ける */
 function startPrint_(){
   if (P.busy) return;
@@ -2404,8 +2484,9 @@ function startPrint_(){
   call('startExport', [{ from:P.from, to:P.to, title:jobTitle_(), actor:S.me }], function(job){
     P.job = job;
     renderPrint();
+    pollJob_(function(){ return P.busy; }, function(j){ P.job = j; updateProgress_(j); });
     pump_();
-  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+  }, function(e){ P.busy = false; stopPollJob_(); fail(e); renderPrint(); });
 }
 
 function pump_(){
@@ -2416,9 +2497,10 @@ function pump_(){
       setTimeout(pump_, 400);
     } else {
       P.busy = false;
+      stopPollJob_();
       if (job && job.state === 'done') toast('PDFを出力しました');
     }
-  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+  }, function(e){ P.busy = false; stopPollJob_(); fail(e); renderPrint(); });
 }
 
 function jobTitle_(){
@@ -2854,8 +2936,9 @@ function lgExport(){
   }], function(job){
     LG.job = job;
     lgRenderExport();
+    pollJob_(function(){ return LG.busy; }, function(j){ LG.job = j; updateProgress_(j); });
     lgPump();
-  }, function(e){ LG.busy = false; LG.job = null; lgRenderExport(); fail(e); });
+  }, function(e){ LG.busy = false; stopPollJob_(); LG.job = null; lgRenderExport(); fail(e); });
 }
 
 function lgPump(){
@@ -2866,9 +2949,10 @@ function lgPump(){
       setTimeout(lgPump, 400);
     } else {
       LG.busy = false;
+      stopPollJob_();
       if (job && job.state === 'done') toast('PDFを出力しました');
     }
-  }, function(e){ LG.busy = false; fail(e); lgRenderExport(); });
+  }, function(e){ LG.busy = false; stopPollJob_(); fail(e); lgRenderExport(); });
 }
 
 function lgRenderExport(){
@@ -3005,6 +3089,7 @@ var MOCK = (function(){
   ];
 
   var store = {};
+  var job = null;
 
   function names(){ return staff.filter(function(s){ return s.active; }); }
   function chiefOn(date){
@@ -3341,6 +3426,7 @@ var MOCK = (function(){
       return job;
     },
     cancelExport: function(){ if (job) job.state = 'canceled'; return job; },
+    getExportStatus: function(){ return job; },
 
     claimDay: function(p){
       if (!store[p.date]) store[p.date] = { state:'editing', lockedBy:p.staff };

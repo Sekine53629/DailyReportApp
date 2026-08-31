@@ -1500,9 +1500,28 @@ function outOfRange_(v, range) {
  * テンプレートをコピーして1週間分を書き込み、そのシートを返す。
  * 記録のない日はテンプレートの見た目を残します(白紙のまま印刷できるように)。
  */
-function renderWeekSheet_(target, startIso, rows, seals) {
+/**
+ * 印影を置く位置の計算に使う寸法。
+ * テンプレートで決まっていて週ごとに変わらないので、出力の最初に1回だけ読みます。
+ * これを1コマごとに読むと、書き込みの列に読み取りが割り込み、
+ * そのたびにシートへの反映待ちが起きて目に見えて遅くなります。
+ */
+function stampGeometry_(tpl) {
   const t = T_();
-  const sh = templateSheet_().copyTo(target);
+  const sh = tpl || templateSheet_();
+  const colW = {};
+  [t.COL.STAFF, t.COL.ADMIN].forEach(function (c) { colW[c] = sh.getColumnWidth(c); });
+  const rowH = {};
+  for (let i = 0; i < PRINT.DAY_ROWS; i++) {
+    const r = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
+    rowH[r] = sh.getRowHeight(r);
+  }
+  return { colW: colW, rowH: rowH };
+}
+
+function renderWeekSheet_(target, startIso, rows, seals, geo, tpl) {
+  const t = T_();
+  const sh = (tpl || templateSheet_()).copyTo(target);
   sh.setName(startIso);
   sh.showSheet();
 
@@ -1534,8 +1553,8 @@ function renderWeekSheet_(target, startIso, rows, seals) {
     if (outOfRange_(r.coldHumid, R.COLD_HUMID)) redCell_(sh, r1, t.COL.COLD_H);
 
     // 印影。Blobは呼び出し元で1回だけ読んであるので、ここではDriveを叩かない
-    stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin]);
-    stampCell_(sh, r1, t.COL.STAFF, seals[r.staff]);
+    stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin], geo);
+    stampCell_(sh, r1, t.COL.STAFF, seals[r.staff], geo);
   });
 
   return sh;
@@ -1556,10 +1575,11 @@ function redCell_(sh, row, col) {
 
 /** セルの中央に印影を置く。
  *  列幅・行の高さはシートから読むので、テンプレートを直しても中央のままです */
-function stampCell_(sh, row, col, blob) {
+function stampCell_(sh, row, col, blob, geo) {
   if (!blob) return;
-  const cw = sh.getColumnWidth(col);
-  const ch = sh.getRowHeight(row);
+  // 寸法は stampGeometry_ で先に読んである。無いときだけその場で読む
+  const cw = (geo && geo.colW[col]) || sh.getColumnWidth(col);
+  const ch = (geo && geo.rowH[row]) || sh.getRowHeight(row);
   const size = Math.max(16, Math.min(cw, ch) - 6);   // セルからはみ出さない大きさ
   const img = sh.insertImage(blob, col, row,
                              Math.round((cw - size) / 2),
@@ -1657,11 +1677,13 @@ function runExportChunk() {
     const idx = dailyIndex_();
     const terms = termList_();
     const seals = sealBlobMap_();          // 印影は1回だけ読む(ここが効く)
+    const tpl = templateSheet_();          // テンプレートの引き直しも1回に
+    const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
 
     while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
       const w = job.weeks[job.done];
       const rows = weekRows_(w, idx, terms);
-      renderWeekSheet_(temp, w, rows, seals);
+      renderWeekSheet_(temp, w, rows, seals, geo, tpl);
       job.done++;
       PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
     }
