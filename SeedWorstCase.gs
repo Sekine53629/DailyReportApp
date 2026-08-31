@@ -82,7 +82,17 @@ const SEED = Object.freeze({
   XFERS_PER_DAY: 4,
 
   /** 全項目を管理基準の外に置く（赤字にする書き込みが毎日増えます） */
-  ALL_OUT_OF_RANGE: true
+  ALL_OUT_OF_RANGE: true,
+
+  /** テスト用の担当者に、中身の違う印影を1つずつ作る。
+   *
+   *  false にすると、1人ぶんの印影を全員で使い回します。そのとき
+   *  84回の押印はすべて同じ画像なので、Googleが同じ画像をまとめて
+   *  扱っていた場合、実際より速い値が出てしまいます。
+   *  true にすると、元の印影に注記を1つ足した「見た目は同じで
+   *  中身が違う」画像を人数ぶん作り、印影フォルダに置きます。
+   *  片づけのときに消します。 */
+  DISTINCT_SEALS: true
 });
 
 /** 埋める範囲。FILL_WHOLE_WEEKS なら、その月にかかる週の端から端まで */
@@ -117,6 +127,114 @@ function isSeedName_(n) {
  *  「元の管理薬剤師に戻す」ための任期は本物の氏名で入るので、IDで見分けます */
 function isSeedTermId_(id) {
   return String(id || '').indexOf('TSEED') === 0;
+}
+
+/* ------------------------------------------------------------
+ *  中身の違う印影を作る
+ *
+ *  PNGは [長さ][種類][中身][CRC] という塊の並びでできています。
+ *  終わりの IEND の手前に、注記(tEXt)の塊を1つ差し込むだけで、
+ *  見た目はそのままに中身(バイト列)だけが変わります。
+ *
+ *  84回の押印を全部「別の画像」で測るためのものです。
+ * ---------------------------------------------------------- */
+
+/** CRC32 の表。PNGの塊ごとの検査値に使います */
+const CRC_TABLE = (function () {
+  const t = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32_(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    c = CRC_TABLE[(c ^ (bytes[i] & 0xFF)) & 0xFF] ^ (c >>> 8);
+  }
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** 0〜255 を、GASが扱う符号つきバイトに直す */
+function sign_(arr) {
+  return arr.map(function (b) { return (b & 0xFF) > 127 ? (b & 0xFF) - 256 : (b & 0xFF); });
+}
+
+/** 4バイトの大きい桁から並べた数 */
+function be32_(n) {
+  return sign_([(n >>> 24) & 0xFF, (n >>> 16) & 0xFF, (n >>> 8) & 0xFF, n & 0xFF]);
+}
+
+/**
+ * PNGに注記を1つ足して、中身の違う画像にする。見た目は変わりません。
+ * 形が想定と違うときは、何もせず元のまま返します。
+ */
+function pngVariant_(bytes, tag) {
+  const cut = bytes.length - 12;                 // 終わりの IEND は12バイト
+  if (cut < 8) return bytes;
+  const isIEND = bytes[cut + 4] === 0x49 && bytes[cut + 5] === 0x45
+              && bytes[cut + 6] === 0x4E && bytes[cut + 7] === 0x44;
+  if (!isIEND) {
+    console.warn('PNGの終わりが想定と違うため、印影は使い回しになります');
+    return bytes;
+  }
+
+  const text = 'Comment\u0000' + tag;
+  const data = [];
+  for (let i = 0; i < text.length; i++) data.push(text.charCodeAt(i) & 0xFF);
+  const type = [0x74, 0x45, 0x58, 0x74];         // 'tEXt'
+
+  const chunk = be32_(data.length)
+    .concat(sign_(type))
+    .concat(sign_(data))
+    .concat(be32_(crc32_(type.concat(data))));
+
+  return bytes.slice(0, cut).concat(chunk).concat(bytes.slice(cut));
+}
+
+/** 測定用に作った印影の名前の頭。これで見分けて掃除します */
+const SEED_SEAL_PREFIX = 'seedseal_';
+
+/**
+ * 印影フォルダから、測定用に作った印影をすべて片づける。
+ *
+ * 担当者の行をたどって消すのでは足りません。作り直すたびに参照が
+ * 新しいものへ向くので、前のファイルが誰からも指されなくなり、
+ * 迷子のまま溜まっていきます。フォルダを名前で掃きます。
+ * 途中で止まって残ったものも、これで片づきます。
+ */
+function dropSeedSeals_() {
+  let n = 0;
+  try {
+    const it = sealFolder_().getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      if (String(f.getName()).indexOf(SEED_SEAL_PREFIX) === 0) { f.setTrashed(true); n++; }
+    }
+  } catch (e) {
+    console.warn('測定用の印影を片づけられませんでした: ' + e);
+  }
+  return n;
+}
+
+/**
+ * テスト用の担当者ぶん、中身の違う印影を作って印影フォルダに置く。
+ * 名前は seedseal_ で始めるので、あとから見分けて消せます。
+ */
+function makeDistinctSeals_(donorFileId, names) {
+  dropSeedSeals_();          // 前に作ったものを先に片づける(溜めないため)
+  const src = DriveApp.getFileById(donorFileId).getBlob().getBytes();
+  const folder = sealFolder_();
+  const out = {};
+  names.forEach(function (n, i) {
+    const bytes = pngVariant_(src, 'seed-' + ('0' + (i + 1)).slice(-2));
+    const blob = Utilities.newBlob(bytes, 'image/png', SEED_SEAL_PREFIX + n + '.png');
+    out[n] = folder.createFile(blob).getId();
+  });
+  return out;
 }
 
 /**
@@ -205,7 +323,6 @@ function seedWorstCaseMonth() {
     return out.join('\n');
   }
   say('■ 印影');
-  say('   ' + donor.name + ' さんの印影を、テスト用の担当者全員に使い回します');
 
   /* ---- 先に片づける（何度実行しても同じ結果になるように） ---- */
   const wiped = clearSeedRows_();
@@ -213,6 +330,21 @@ function seedWorstCaseMonth() {
 
   /* ---- テスト用の担当者 ---- */
   const names = seedStaffNames_();
+
+  // 84回の押印を全部「別の画像」で測るため、人数ぶん作ります。
+  // 同じ画像だと、Googleがまとめて扱っていた場合に速く出てしまいます
+  let seals = {};
+  if (SEED.DISTINCT_SEALS) {
+    seals = makeDistinctSeals_(donor.sealFileId, names);
+    say('   ' + donor.name + ' さんの印影から、中身の違うものを '
+      + names.length + ' 個作りました（見た目は同じです）');
+    say('   同じ画像だと、まとめて扱われて実際より速く出るおそれがあるためです');
+  } else {
+    names.forEach(function (n) { seals[n] = donor.sealFileId; });
+    say('   ' + donor.name + ' さんの印影を、テスト用の担当者全員で使い回します');
+    say('   ★ 84回とも同じ画像なので、実際より速い値が出るかもしれません');
+  }
+
   const t = table_(SH.STAFF);
   const have = {};
   t.rows.forEach(function (x) { have[String(x['氏名'])] = x; });
@@ -222,16 +354,15 @@ function seedWorstCaseMonth() {
     if (have[n]) return;
     appendRow_(t, {
       'ID': uid_('S'), '氏名': n, 'メール': '',
-      '在籍': true, '印影ファイルID': donor.sealFileId, '登録日時': new Date()
+      '在籍': true, '印影ファイルID': seals[n], '登録日時': new Date()
     });
     added++;
   });
-  // 既にいる人にも印影を入れ直す(前回 消し忘れていた場合に備えて)
+  // 既にいる人にも入れ直す(前回のものが残っていれば置き換える)
   const t2 = table_(SH.STAFF);
   t2.rows.forEach(function (x) {
-    if (isSeedName_(x['氏名']) && !String(x['印影ファイルID'] || '')) {
-      writeRow_(t2, x._row, { '印影ファイルID': donor.sealFileId });
-    }
+    const n = String(x['氏名']);
+    if (isSeedName_(n) && seals[n]) writeRow_(t2, x._row, { '印影ファイルID': seals[n] });
   });
   say('');
   say('■ 担当者');
@@ -536,11 +667,18 @@ function clearWorstCaseMonth() {
 
   /* ---- 担当者 ---- */
   const ts = table_(SH.STAFF);
-  const staffRows = ts.rows.filter(function (x) { return isSeedName_(x['氏名']); })
-    .map(function (x) { return x._row; }).sort(function (a, b) { return b - a; });
+  const seedStaff = ts.rows.filter(function (x) { return isSeedName_(x['氏名']); });
+
+  // 測定のために作った印影を、フォルダごと掃く。
+  // 借り物(本番の方の印影)は名前が違うので触れません
+  const killed = dropSeedSeals_();
+
+  const staffRows = seedStaff.map(function (x) { return x._row; })
+    .sort(function (a, b) { return b - a; });
   staffRows.forEach(function (row) { ts.sh.deleteRow(row); });
   say('   担当者マスタから ' + staffRows.length + ' 行を消しました');
-  say('   （印影のファイルは借り物なので消していません）');
+  say('   測定用に作った印影 ' + killed + ' 個をごみ箱に入れました'
+    + '（本番の方の印影には触れていません）');
 
   /* ---- 確定台帳。消さずに知らせる ---- */
   const fixes = fixOf_(SEED.MONTH);
