@@ -1682,3 +1682,268 @@ function exportLastMonth() {
   while (job && job.state === 'running') job = runExportChunk();
   Logger.log(job && job.pdfUrl ? 'PDF: ' + job.pdfUrl : '出力できませんでした');
 }
+
+/* ############################################################
+   7. 記録簿ビュー(監査用の一覧表示と、PCからの直接修正)
+   ############################################################
+   保健所などの立入検査で、その場で見せられる画面のためのデータを作ります。
+   ・1か月ぶんを「週」に区切って返します。帳票の1ページ = 1週なので、
+     画面の1枚が印刷の1ページにそのまま対応します。
+   ・PCから直しやすいよう、編集に必要な値もそのまま持たせています。
+   ・承認済みの日も直せますが、必ず承認を解除し、変更内容を履歴に残します。
+   ############################################################ */
+
+/** 管理基準を持つ項目。CFG.RANGES のキーと結びつけます */
+const RANGE_FIELDS = [
+  { key: 'roomTemp',  label: '調剤室温度', range: 'ROOM_TEMP',  dec: 1, unit: '℃' },
+  { key: 'roomHumid', label: '調剤室湿度', range: 'ROOM_HUMID', dec: 0, unit: '%'  },
+  { key: 'coldTemp',  label: '冷所温度',   range: 'COLD_TEMP',  dec: 1, unit: '℃' },
+  { key: 'coldHumid', label: '冷所湿度',   range: 'COLD_HUMID', dec: 0, unit: '%'  }
+];
+
+/** 変更履歴に「前の値 → 後の値」を残すための項目 */
+const DIFF_FIELDS = [
+  { key: 'rx',        label: '処方箋枚数', dec: 0, unit: '枚' },
+  { key: 'inquiry',   label: '疑義照会',   dec: 0, unit: '件' },
+  { key: 'roomTemp',  label: '調剤室温度', dec: 1, unit: '℃' },
+  { key: 'roomHumid', label: '調剤室湿度', dec: 0, unit: '%'  },
+  { key: 'coldTemp',  label: '冷所温度',   dec: 1, unit: '℃' },
+  { key: 'coldHumid', label: '冷所湿度',   dec: 0, unit: '%'  }
+];
+
+/** その月の初日 */
+function monthStart_(iso) { return iso.slice(0, 7) + '-01'; }
+
+/** その月の末日(翌月の0日 = 当月の末日) */
+function monthEnd_(iso) {
+  const p = iso.split('-');
+  return Utilities.formatDate(new Date(+p[0], +p[1], 0), CFG.TZ, 'yyyy-MM-dd');
+}
+
+/** 管理基準を外れている項目を並べる */
+function rangeAlerts_(d) {
+  const out = [];
+  RANGE_FIELDS.forEach(function (f) {
+    const r = CFG.RANGES[f.range];
+    if (outOfRange_(d[f.key], r)) {
+      out.push({ key: f.key, label: f.label, value: d[f.key], min: r[0], max: r[1] });
+    }
+  });
+  return out;
+}
+
+function showNum_(v, dec, unit) {
+  return (v === null || v === undefined || v === '') ? '空欄' : Number(v).toFixed(dec) + unit;
+}
+
+/** 修正の前後を、履歴に残せる文字列の配列にする */
+function diffDay_(before, after) {
+  const out = [];
+  DIFF_FIELDS.forEach(function (f) {
+    const a = before[f.key];
+    const b = num_(after[f.key]);
+    if (a === b) return;
+    out.push(f.label + ' ' + showNum_(a, f.dec, f.unit) + '→' + showNum_(b, f.dec, f.unit));
+  });
+  XFER_MAP.forEach(function (m) {
+    const a = String(before[m.key] || '').trim();
+    const b = String(after[m.key] || '').trim();
+    if (a !== b) out.push(m.col + '「' + (a || '空欄') + '」→「' + (b || '空欄') + '」');
+  });
+  return out;
+}
+
+/* ------------------------------------------------------------
+ *  1か月ぶんの記録簿
+ * ---------------------------------------------------------- */
+
+function ledgerPayload_(anchorIso) {
+  const today = today_();
+  let anchor = anchorIso ? fmt_(anchorIso) : today;
+  if (!anchor) anchor = today;
+  // 未来の月は開かせない
+  if (monthStart_(anchor) > monthStart_(today)) anchor = today;
+
+  const mStart = monthStart_(anchor);
+  const mEnd   = monthEnd_(anchor);
+
+  const idx   = dailyIndex_();
+  const terms = termList_();
+  const staff = staffList_();
+
+  const seals = {};
+  staff.forEach(function (s) {
+    if (s.sealFileId) seals[s.name] = sealDataUrl_(s.sealFileId);
+  });
+
+  const hasTemplate = !!ss_().getSheetByName(T_().SHEET);
+  const stat = { days: 0, filled: 0, approved: 0, missing: 0, alerts: 0, future: 0 };
+  const alertList = [];
+  const weeks = [];
+
+  // 月をまたぐ週も帳票では1ページなので、週の頭から週の終わりまで通しで持ちます
+  let w = weekStart_(mStart);
+  const lastW = weekStart_(mEnd);
+  let guard = 0;
+  while (w <= lastW && guard++ < 10) {
+    const rows = [];
+    for (let i = 0; i < PRINT.DAY_ROWS; i++) {
+      const iso = addDays_(w, i);
+      const d = toDay_(iso, idx.map[iso], terms);
+      const row = {
+        date: iso, dow: d.dow, hours: CFG.BUSINESS_HOURS,
+        rx: d.rx, inquiry: d.inquiry,
+        roomTemp: d.roomTemp, roomHumid: d.roomHumid,
+        coldTemp: d.coldTemp, coldHumid: d.coldHumid,
+        note: xferLine_(d),
+        state: d.state,
+        filled: d.state !== 'empty' && d.state !== 'editing',
+        approved: d.state === 'approved',
+        staff: d.staff,
+        admin: sealOwnerAdmin_(d),   // 印を押す人(未承認でも当日の管理薬剤師)
+        approver: d.admin,           // 実際に承認した人
+        chief: d.chief,
+        savedAt: d.savedAt, approvedAt: d.approvedAt, lockedBy: d.lockedBy,
+        inMonth: iso >= mStart && iso <= mEnd,
+        future: iso > today,
+        alerts: rangeAlerts_(d)
+      };
+      XFER_MAP.forEach(function (m) { row[m.key] = d[m.key]; });
+      rows.push(row);
+
+      if (!row.inMonth) continue;
+      stat.days++;
+      if (row.future) {
+        stat.future++;
+      } else if (row.filled) {
+        stat.filled++;
+        if (row.approved) stat.approved++;
+      } else {
+        stat.missing++;
+      }
+      if (row.alerts.length) {
+        stat.alerts += row.alerts.length;
+        alertList.push({ date: iso, dow: row.dow, items: row.alerts });
+      }
+    }
+    weeks.push({ start: w, end: addDays_(w, 6), rows: rows });
+    w = addDays_(w, 7);
+  }
+
+  const nextFirst = addDays_(mEnd, 1);
+  return {
+    store: CFG.STORE_NAME,
+    storeCode: CFG.STORE_CODE,
+    today: today,
+    month: mStart.slice(0, 7),
+    monthLabel: mStart.slice(0, 4) + '年' + Number(mStart.slice(5, 7)) + '月',
+    monthStart: mStart,
+    monthEnd: mEnd,
+    prevMonth: addDays_(mStart, -1),
+    nextMonth: monthStart_(nextFirst) > monthStart_(today) ? '' : nextFirst,
+    hours: CFG.BUSINESS_HOURS,
+    ranges: CFG.RANGES,
+    layout: hasTemplate ? templateLayout_() : null,
+    hasTemplate: hasTemplate,
+    seals: seals,
+    weeks: weeks,
+    stat: stat,
+    alerts: alertList
+  };
+}
+
+/* ------------------------------------------------------------
+ *  記録簿からの書き込み
+ * ---------------------------------------------------------- */
+
+/**
+ * 記録簿の1日を直す。
+ *
+ * 承認済みの日について
+ *   内容が変わった記録に、前の内容に対する承認印を残したままにはできません。
+ *   そのため、承認済みの日を直したときは
+ *     1. 変更前後の値を変更履歴に残し
+ *     2. 承認を解除して「入力済」に戻す(管理薬剤師の再承認が必要になる)
+ *   という扱いにしています。画面側で必ず確認をとってから呼んでください。
+ *
+ * 担当者について
+ *   既に記録がある日は、その日の担当者を勝手に書き換えません。
+ *   直した人は変更履歴の「操作者」に残ります。
+ *   担当者そのものを直すときは rowStaff に新しい氏名を入れてください。
+ */
+function saveLedgerDay_(p) {
+  const iso = fmt_(p.date);
+  if (!iso) throw new Error('日付が正しくありません');
+  if (iso > today_()) throw new Error('未来の日付は登録できません');
+
+  const actor = String(p.actor || p.staff || '').trim();
+  if (!actor) throw new Error('操作者が特定できません');
+
+  const terms  = termList_();
+  const before = toDay_(iso, dailyIndex_().map[iso], terms);
+  const wasApproved = before.state === 'approved';
+
+  if (wasApproved && !p.force) {
+    throw new Error('承認済みの日です。画面の確認に同意してから保存してください');
+  }
+
+  const staffName = String(p.rowStaff || before.staff || actor).trim();
+  if (!staffName) throw new Error('担当者が選ばれていません');
+
+  const changes = diffDay_(before, p);
+  if (before.staff && staffName !== before.staff) {
+    changes.push('担当者「' + before.staff + '」→「' + staffName + '」');
+  }
+
+  // 承認済みなら、先に承認を落としてから書き込む
+  if (wasApproved) {
+    const lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      const idx = dailyIndex_();
+      const row = idx.map[iso];
+      if (row) writeRow_(idx.t, row._row, { '管理者': '', '承認日時': '', '状態': '入力済' });
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  const q = { date: iso, staff: staffName, force: true };
+  DIFF_FIELDS.forEach(function (f) { q[f.key] = p[f.key]; });
+  XFER_MAP.forEach(function (m) { q[m.key] = p[m.key]; });
+  saveDay_(q);
+
+  if (wasApproved) {
+    audit_('承認済みの日報を修正（承認を解除）',
+      iso + '：' + (changes.length ? changes.join('、') : '内容の変更なし') +
+      '／承認者 ' + (before.admin || '—') + ' の承認を解除', actor);
+  } else if (changes.length) {
+    audit_('日報を修正（記録簿）', iso + '：' + changes.join('、'), actor);
+  } else if (before.state === 'empty') {
+    audit_('日報を追加（記録簿）', iso + '：担当 ' + staffName, actor);
+  }
+
+  return ledgerPayload_(iso);
+}
+
+/* ############################################################
+   8. 記録簿の入口(画面から呼ばれる)
+   ############################################################ */
+
+function getLedger(anchor) { return guard_('getLedger', function () {
+  return ledgerPayload_(anchor);
+}); }
+
+function saveLedgerDay(p) { return guard_('saveLedgerDay', function () {
+  return saveLedgerDay_(p);
+}); }
+
+function approveLedgerDay(p) { return guard_('approveLedgerDay', function () {
+  approveDay_(p);
+  return ledgerPayload_(p.date);
+}); }
+
+function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function () {
+  unapproveDay_(p);
+  return ledgerPayload_(p.date);
+}); }
