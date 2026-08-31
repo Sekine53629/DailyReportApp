@@ -475,6 +475,7 @@ function staffList_() {
       id: String(r['ID']),
       name: String(r['氏名']),
       email: String(r['メール'] || ''),
+      // 在籍のセルは true/false で持つ。'退職' は以前の書き方で、古いシート用に残してある
       active: r['在籍'] !== false && String(r['在籍']) !== 'FALSE' && String(r['在籍']) !== '退職',
       sealFileId: String(r['印影ファイルID'] || ''),
       records: counts[String(r['氏名'])] || 0,
@@ -576,7 +577,7 @@ function updateStaff_(p) {
   writeRow_(t, row._row, patch);
 
   if (p.active !== undefined) {
-    audit_(p.active ? '担当者を復帰' : '担当者を退職', name, p.actor);
+    audit_(p.active ? '担当者を在籍に戻す' : '担当者を在籍から外す', name, p.actor);
   }
   return masterPayload_();
 }
@@ -588,10 +589,10 @@ function removeStaff_(p) {
 
   const name = String(row['氏名']);
   if ((dailyCountsByStaff_()[name] || 0) > 0) {
-    throw new Error('日報に記録が残っているため削除できません。退職にしてください');
+    throw new Error('日報に記録が残っているため削除できません。在籍から外してください');
   }
   if (termList_().some(function (x) { return x.staffId === String(p.id); })) {
-    throw new Error('管理薬剤師の履歴が残っているため削除できません。退職にしてください');
+    throw new Error('管理薬剤師の履歴が残っているため削除できません。在籍から外してください');
   }
 
   removeSealFile_(String(row['印影ファイルID'] || ''));

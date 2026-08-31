@@ -484,7 +484,7 @@ button,input,select{font:inherit;color:inherit}
 }
 .mrow:first-of-type{border-top:0}
 .mrow .mn{font-family:var(--disp);font-weight:700;font-size:14.5px;flex:1;min-width:7em}
-.mrow.retired .mn{color:var(--muted);text-decoration:line-through}
+.mrow.off .mn{color:var(--muted)}
 .mini{
   border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;
   padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;
@@ -2006,10 +2006,12 @@ function renderStaffTab(){
   A.master.terms.forEach(function(t){ chiefNames[t.name] = true; });
 
   var rows = A.master.staff.map(function(s){
-    return '<div class="mrow' + (s.active ? '' : ' retired') + '" data-id="' + s.id + '">'
+    return '<div class="mrow' + (s.active ? '' : ' off') + '" data-id="' + s.id + '">'
       + '<span class="mn">' + esc(s.name) + '</span>'
+      + (s.active ? '' : '<span class="chip off">在籍なし</span>')
       + sealBtn_(s)
-      + '<button class="mini" data-act="active">' + (s.active ? '退職にする' : '復帰させる') + '</button>'
+      + '<button class="mini" data-act="active">'
+      + (s.active ? '在籍から外す' : '在籍に戻す') + '</button>'
       + (s.records === 0 && !chiefNames[s.name]
           ? '<button class="mini danger" data-act="delete">削除</button>' : '')
       + '<span class="cnt">' + (s.records === 0
@@ -2024,9 +2026,11 @@ function renderStaffTab(){
     +   '<button class="mini on" id="addGo">追加</button>'
     + '</div>'
     + '<div class="note-block">'
-    +   '<b>退職と削除の違い</b>'
-    +   '日報や管理薬剤師の履歴に名前が残っている人は、削除ではなく退職にしてください。'
-    +   '退職にすると担当のプルダウンからは消えますが、過去の記録に押された名前はそのまま残ります。'
+    +   '<b>「在籍から外す」と「削除」の違い</b>'
+    +   '日報や管理薬剤師の履歴に名前が残っている人は、削除ではなく在籍から外してください。'
+    +   '在籍から外すと担当のプルダウンには出なくなりますが、'
+    +   '過去の記録に押された名前はそのまま残ります。退職だけでなく、異動や休職で'
+    +   'しばらく入らないときにも使えます。戻ってきたら「在籍に戻す」で元どおりです。'
     + '</div>');
 
   Array.prototype.forEach.call(document.querySelectorAll('.mrow .sealbtn'), function(btn){
@@ -2043,9 +2047,10 @@ function renderStaffTab(){
         if (!confirm(rec.name + ' さんを名簿から削除します。よろしいですか？')) return;
         masterCall('removeStaff', { id:id, actor:S.me }, rec.name + ' さんを削除しました');
       } else {
-        if (rec.active && !confirm(rec.name + ' さんを退職にします。\n過去の記録はそのまま残ります。')) return;
+        if (rec.active && !confirm(rec.name + ' さんを在籍から外します。\n'
+          + '担当のプルダウンに出なくなります。\n過去の記録に押された名前はそのまま残ります。')) return;
         masterCall('updateStaff', { id:id, active:!rec.active, actor:S.me },
-          rec.name + ' さんを' + (rec.active ? '退職にしました' : '復帰させました'));
+          rec.name + ' さんを' + (rec.active ? '在籍から外しました' : '在籍に戻しました'));
       }
     });
   });
@@ -2312,7 +2317,7 @@ function masterCall(fn, arg, okMsg){
       S.staff = d.staff;
       S.terms = d.terms || [];
       var names = activeStaff().map(function(s){ return s.name; });
-      if (names.indexOf(S.me) < 0) S.me = '';   // 退職などで消えたら空欄に戻す
+      if (names.indexOf(S.me) < 0) S.me = '';   // 在籍から外れて消えたら空欄に戻す
       renderIdentity();
       apply(d);
     });
@@ -3509,6 +3514,53 @@ var MOCK = (function(){
   var SEAL_A = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAFRklEQVR42u3dO3IbOxBG4RkU1+LAa9DyvQYG2owdOVEg8QEM+vGdqpvaYqMP/u4Zmfc4AAAAAAAAAAAAanIqwXX8+f3r76w/6+P+6ewI0lsC8hCEDKQhCCEIQxBSkIUgpCALQYgBohCEFGQhCDGIQhBiEIUgxCAKQWqLMbOhqn4ugjQQY2fDdP3cBAnaJBmaQj0IcmkjZG4CNWooyBWHXnF8ULcGgqw85E6PM9WxoCCrDrXzm2M1LSDIikP0u0fqXEKQ2YdGDDUvI4h/063+BHEwziMQw2FgZx2j/47c2UEOYjijcoLMKDwxnFfJEYscPceuiOPWIAdIkmTEerc4xHCWZROEHNIkYpIMcoAkgUesd4pAjB4j185zHoqG6GmyM0kGOUCSYIKQgyRZJBldigvnmEKQV28BcpBkR4oMcoAkAQQhBzJKMioWD3aSVIK8Yjs5SBIhRW5RR6suPFIfl8X39VtZnxFRDg0hRaJcwqNKkWAfSSWIvQMV9pHhOICLBZEeqJIigxwgSeARixyI3B9T34NkeOfhvUN9Zr4bGZ1vB0iRywTxxhzZJoXQCSI98jRJ5xQZOw6CHOvFqJjoz/bNjBrctFPttFj9y3zVGasORnpIiwop4ldN7CJYJYj06Lu8dkkRCSJFEEEQ6aG2GT/zy4K4kdAhQY1YjW5Ul9pFgljO0WVZlyBGDewURHpY1jN/5qcFcQNJkU6f3YjlRsUuQRyWFMl+KYyuRZUiLgcjFvAmy54jR7nFpF6fxFrRnxIEmCGImxgd95AlCWJJRJVRz4gFEAQgCLBHEAs6ui7q52xBoi/o0b68+qqfp9OXds/sVyMWTAoEgUfvBIEUIQikCEGALIJUeoKFHl8P9Ewf/vRZJQhAEFjWCQKjMEEgRQgCKUIQgCBIniLdxyyCAASBFCEIQBDsoWuKEAQe+RIEUoQgkCIEAQiCsCnSbcwiCPANN4tl/Fsy+s9TeX/5MUFm/vNFINqF4ovjADsIQBCAIABBgK6CeJKFnczuv4feg3zcP8+sjf/1MV7X/z+IC++1uhqxQCKCYOUtawcBCCJy8XqKRDjzFT/DmFkkoNroaMSCyWGHIMYsy3oFOSUIXIyzBLGHSJFun2NpghizpEj2v8+IhZYpskwQYxY6Cb48QYxZPZvsqnNf/fcYsYDZgjwbU1LEsh7hz39lPZAgsKyvEMSyjkzTw6v9OroVCjVS5Kp+ujlmGMMWJYhlHV974OP+ef7/L/NyLkEgLa7YQaQIon0LzMyfzWNeYLUgUgQV02NrgpAEGfplmiBeHKLiXjQ63gqQHo9ym21t9KaXdNIjTYJIEUTvjxHBXpJgVl/MnhCWJAhJUEGOECMWEJllgkgRZE+PkAlCEnK0SJB3rCYJOSKkx3Ecxxn1g3tfQZAIfXLJiGUfQdZLdFQrGuwdKQWxjyDL3rEtQUiCTHJsGbFIgixyhN9BSEKONjvIrFuAJH3l2PHof1uCkIQc0eXYPmKRhByR5TiOi96kr252b93r7hu7zzbEkv5uEaQJOUoLQhJyRJ0KzmqFNXI5v5IJMrM40oQcZQUhCTkicVYvupHLGZUVZHYSEMW5lBixVhXP2EWOcgkiTdSfIBtTgChqXkqQVaMSUdS5jCCrd4rOsqhpIUFWL96dRFHHooKsPtzKsqhbE0GuPPDsh65GjQW5ugmyNIJ6EGRrU0Rqkq6fmyAJG2ZlA1X9XAQhShk6POVr97yfKMQgCFGIQRCiEIMgZCEFQYhCDIKQhRQEIQspCIKEwhCCIKQhA0HIQwIAAAAAAAAAAB7kH5oC8/+VfJnVAAAAAElFTkSuQmCC';
   var SEAL_B = 'data:image/png;base64,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';
 
+  // 確定台帳（プレビュー用。実際はスプレッドシートの「確定台帳」シート）
+  var fixes = [];
+
+  function monthEndOf(month){
+    var mp = month.split('-');
+    return iso(new Date(+mp[0], +mp[1], 0));
+  }
+  function fixOfMock(month){
+    return fixes.filter(function(x){ return x.month === month; })
+                .sort(function(a,b){ return b.version - a.version; });
+  }
+  // プレビュー用の見せかけのハッシュ。形（64桁の16進）だけ本物に合わせる
+  function fakeHash(seed){
+    var h = '';
+    for (var i = 0; i < 64; i++){
+      var x = i;
+      for (var j = 0; j < seed.length; j++) x = (x * 31 + seed.charCodeAt(j)) % 16;
+      h += x.toString(16);
+    }
+    return h;
+  }
+  function freezeState(month){
+    var mStart = month + '-01', mEnd = monthEndOf(month);
+    var stat = { month:month, start:mStart, end:mEnd,
+                 days:0, filled:0, approved:0, missing:0 };
+    for (var d = mStart; d <= mEnd; d = addDays(d, 1)){
+      stat.days++;
+      var r = store[d];
+      if (!r || r.state === 'editing' || r.state === 'empty'){ stat.missing++; continue; }
+      stat.filled++;
+      if (r.state === 'approved') stat.approved++;
+    }
+    var vers = fixOfMock(month);
+    var live = vers.filter(function(x){ return x.alive; });
+    var reasons = [];
+    if (mEnd >= todayIso) reasons.push('その月がまだ終わっていません');
+    if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
+    var un = stat.filled - stat.approved;
+    if (un) reasons.push('未承認が ' + un + ' 日あります');
+    return {
+      month: month, stat: stat, unapproved: un, versions: vers,
+      latest: live.length ? live[0] : null, frozen: !!live.length,
+      nextVersion: vers.reduce(function(m,x){ return Math.max(m, x.version); }, 0) + 1,
+      ok: !reasons.length, reasons: reasons
+    };
+  }
+
   var staff = [
     { id:'s1', name:'関根 禎浩', active:true,  sealUrl:SEAL_A },
     { id:'s2', name:'山田 太郎', active:true  },
@@ -3525,7 +3577,7 @@ var MOCK = (function(){
   var log = [
     { at: shift(today,-120).slice(5).replace('-','/') + ' 09:00', action:'管理薬剤師の交代',
       detail:'高橋 実 → 関根 禎浩(' + shift(today,-120) + ' から)', actor:'高橋 実' },
-    { at: shift(today,-118).slice(5).replace('-','/') + ' 10:20', action:'担当者を退職',
+    { at: shift(today,-118).slice(5).replace('-','/') + ' 10:20', action:'担当者を在籍から外す',
       detail:'高橋 実', actor:'関根 禎浩' }
   ];
 
@@ -3764,7 +3816,8 @@ var MOCK = (function(){
         hours:'10:00〜20:00',
         ranges:{ ROOM_TEMP:[1,30], ROOM_HUMID:[30,70], COLD_TEMP:[2,8], COLD_HUMID:null },
         layout: LAYOUT, hasTemplate: true, seals: seals,
-        weeks: weeks, stat: stat, alerts: alerts
+        weeks: weeks, stat: stat, alerts: alerts,
+        freeze: freezeState(mStart.slice(0,7))
       };
     },
 
@@ -3866,10 +3919,114 @@ var MOCK = (function(){
       if (job.done >= job.weeks.length){
         job.state = 'done';
         job.pdfUrl = 'https://drive.google.com/(プレビューでは実際のPDFは作られません)';
+        if (job.kind === 'freeze'){
+          fixes.push({
+            id: 'f' + (fixes.length + 1),
+            month: job.month, version: job.version,
+            at: todayIso.replace(/-/g,'/') + ' 12:00',
+            by: job.actor || '',
+            name: job.month + '_業務日報_v' + job.version
+                + '_確定' + todayIso.replace(/-/g,'') + '.pdf',
+            fileId: 'demo', url: job.pdfUrl, alive: true, note: job.note || '',
+            hash: fakeHash(job.month + 'v' + job.version),
+            chain: fakeHash('chain' + job.month + 'v' + job.version)
+          });
+        }
       }
       return job;
     },
     cancelExport: function(){ if (job) job.state = 'canceled'; return job; },
+
+    /* ---------- 月次の確定 ---------- */
+    // プレビューと試験用。指定した月を「全日 記録あり・承認済み」にする
+    _fillMonth: function(month){
+      var mEnd = monthEndOf(month);
+      for (var d = month + '-01'; d <= mEnd; d = addDays(d, 1)){
+        store[d] = { state:'approved', rx:80, inquiry:1,
+          roomTemp:23, roomHumid:47, coldTemp:5, coldHumid:52,
+          staff:'山田 太郎', admin:'関根 禎浩', savedAt:'18:00', approvedAt:'18:30' };
+      }
+      return true;
+    },
+
+    getFreezeState: function(month){ return freezeState(String(month).slice(0,7)); },
+
+    startFreeze: function(p){
+      var f = freezeState(String(p.month).slice(0,7));
+      if (!f.ok) throw new Error('この月はまだ確定できません：' + f.reasons.join('／'));
+      var note = String(p.note || '').trim();
+      if (f.frozen && !note){
+        throw new Error('すでに第' + f.latest.version
+          + '版があります。作り直す理由を書いてください');
+      }
+      var weeks = [], a = new Date(f.stat.start), b = new Date(f.stat.end);
+      while (a <= b){ weeks.push(a.toISOString().slice(0,10)); a.setDate(a.getDate() + 7); }
+      job = {
+        kind:'freeze', month:f.month, version:f.nextVersion, note:note, actor:p.actor,
+        from:f.stat.start, to:f.stat.end,
+        title: f.month + '_業務日報_v' + f.nextVersion,
+        weeks:weeks, done:0, startedAt:new Date().toISOString(),
+        state:'running', pdfUrl:''
+      };
+      return job;
+    },
+
+    getFixList: function(){
+      var byMonth = {};
+      fixes.slice().sort(function(a,b){
+        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
+        return b.version - a.version;
+      }).forEach(function(x){ (byMonth[x.month] = byMonth[x.month] || []).push(x); });
+      var months = Object.keys(byMonth).sort().reverse().map(function(m){
+        var live = byMonth[m].filter(function(x){ return x.alive; });
+        return { month:m, label: m.slice(0,4) + '年' + Number(m.slice(5,7)) + '月',
+                 versions: byMonth[m], latest: live.length ? live[0] : null };
+      });
+      return { store:'くるむ薬局 札幌店', today: todayIso, months: months };
+    },
+
+    verifyFixes: function(){
+      return {
+        total: fixes.length, bad: 0, at: stamp(),
+        items: fixes.map(function(x){
+          return { month:x.month, version:x.version, name:x.name,
+                   alive:x.alive, state:'ok', detail:'' };
+        })
+      };
+    },
+
+    bundleFixes: function(p){
+      var seen = {}, picked = [];
+      fixes.slice().sort(function(a,b){
+        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
+        return b.version - a.version;
+      }).forEach(function(x){
+        if (!x.alive || x.month < p.from || x.month > p.to) return;
+        if (seen[x.month]) return;
+        seen[x.month] = true;
+        picked.push(x);
+      });
+      if (!picked.length) throw new Error('この期間に確定済みの月がありません');
+      picked.sort(function(a,b){ return a.month < b.month ? -1 : 1; });
+      var name = p.from + '_' + p.to + '_業務日報_'
+        + todayIso.replace(/-/g,'') + '.zip';
+      return {
+        name: name, url: 'https://drive/' + name, months: picked.length,
+        items: picked.map(function(x){
+          return { month:x.month, version:x.version, name:x.name, hash:x.hash };
+        })
+      };
+    },
+
+    voidFix: function(p){
+      if (!String(p.reason || '').trim()) throw new Error('取り消す理由を書いてください');
+      var f = fixes.filter(function(x){ return x.id === p.id; })[0];
+      if (!f) throw new Error('確定台帳にありません');
+      if (!f.alive) throw new Error('すでに取り消されています');
+      f.alive = false;
+      f.note = (f.note ? f.note + ' / ' : '') + '取消：' + p.reason;
+      return MOCK.getFixList();
+    },
     getExportStatus: function(){ return job; },
 
     claimDay: function(p){
@@ -3922,7 +4079,7 @@ var MOCK = (function(){
         throw new Error('現在の管理薬剤師です。先に交代を登録してください');
       if (p.active !== undefined){
         s.active = !!p.active;
-        push(s.active ? '担当者を復帰' : '担当者を退職', s.name, p.actor);
+        push(s.active ? '担当者を在籍に戻す' : '担当者を在籍から外す', s.name, p.actor);
       }
       return master();
     },
@@ -3930,9 +4087,9 @@ var MOCK = (function(){
     removeStaff: function(p){
       var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
       if (records(s.name) > 0)
-        throw new Error('日報に記録が残っているため削除できません。退職にしてください');
+        throw new Error('日報に記録が残っているため削除できません。在籍から外してください');
       if (terms.some(function(t){ return t.staffId === s.id; }))
-        throw new Error('管理薬剤師の履歴が残っているため削除できません。退職にしてください');
+        throw new Error('管理薬剤師の履歴が残っているため削除できません。在籍から外してください');
       staff = staff.filter(function(x){ return x.id !== s.id; });
       push('担当者を削除', s.name, p.actor);
       return master();
