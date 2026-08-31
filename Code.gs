@@ -66,11 +66,24 @@ const CFG = {
   LOCK_MINUTES: 10,
 
   /** 押印のきまり
+   *
    *  ADMIN_EVERY_DAY … 管理者印は、その日に在任している管理薬剤師の印影を
-   *                    承認の有無にかかわらず毎日入れる
-   *  false にすると、承認済みの日だけに印影が入ります */
+   *                    記録の有無や承認の有無にかかわらず毎日入れる。
+   *                    運用上そういうものなので、押す押さないの判定はしません。
+   *                    false にすると、承認済みの日だけに印影が入ります。
+   *
+   *  REUSE_ADMIN_STAMP … 印影を1コマずつ押すのではなく、押し終えた
+   *                    下ごしらえのシートを複製して引き継ぐ。
+   *                    印影の貼り付けは1枚ずつシートと往復するため、
+   *                    ここが出力時間のほとんどを占めています。
+   *                    管理者印は毎日同じ人なので、管理薬剤師の交代日を
+   *                    またがない限り、任期のあいだは下ごしらえ1枚で足ります。
+   *                    複製で画像が引き継がれるかは環境しだいなので、
+   *                    出力のはじめに1度だけ確かめ、駄目なら自動で
+   *                    1コマずつ押す方式に戻ります。 */
   SEAL_POLICY: {
-    ADMIN_EVERY_DAY: true
+    ADMIN_EVERY_DAY: true,
+    REUSE_ADMIN_STAMP: true
   },
 
   /** 帳票テンプレートの作り。
@@ -139,6 +152,21 @@ const CFG = {
     HEAD_BG: '#f4f6f5'
   },
 
+  /** PDFにするときの紙の設定。
+   *
+   *  MARGIN_IN を広げると、帳票を縮める割合が大きくなります。
+   *  逆に狭めて帳票が原寸で収まるようになると、縮小せずに出力するので
+   *  外枠と紙の端のあいだに余裕ができ、罫線が欠けにくくなります。
+   *  （現在の帳票は 1071px ＝ 283.4mm。余白 0.2 インチなら原寸で収まります）
+   *
+   *  EDGE_GAP_PX … 原寸で出すかどうかの判定に使う余裕。罫線の太さぶん。 */
+  PDF: {
+    PAGE: 'A4',
+    LANDSCAPE: true,
+    MARGIN_IN: 0.4,
+    EDGE_GAP_PX: 6
+  },
+
   /** 印影PNGを入れるフォルダ名。スプレッドシートと同じ場所に自動作成します。
    *  ★ このフォルダは誰とも共有しないでください */
   SEAL_FOLDER_NAME: '業務日報_印影',
@@ -191,6 +219,8 @@ function setup() {
   Logger.log('シートを用意しました: ' + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG].join(' / '));
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
+  Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
+  Logger.log('');
   Logger.log('次に「デプロイ > 新しいデプロイ > 種類:ウェブアプリ」を実行してください。');
   Logger.log('  次のユーザーとして実行 : ' +
     (CFG.AUTH_MODE === 'google' ? 'アクセスしているユーザー' : '自分'));
@@ -205,12 +235,11 @@ function ensureSheet_(name, cols) {
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
 
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  const head = headerOf_(sh);
 
   // 足りない見出しだけ右に足す(既存データは動かさない)
   const missing = cols.filter(function (c) { return head.indexOf(c) < 0; });
-  if (head.join('') === '') {
+  if (!head.length) {
     sh.getRange(1, 1, 1, cols.length).setValues([cols]);
   } else if (missing.length) {
     sh.getRange(1, head.length + 1, 1, missing.length).setValues([missing]);
@@ -220,6 +249,84 @@ function ensureSheet_(name, cols) {
   sh.getRange(1, 1, 1, sh.getLastColumn())
     .setFontWeight('bold').setBackground('#e8eaed');
   return sh;
+}
+
+/* ------------------------------------------------------------
+ *  列の過不足をなくす
+ *
+ *  シートへの書き込みは「見出し行にある列」だけを対象にしています。
+ *  そのため、あとから COLS に項目を足しただけでは、古いシートに
+ *  その列が無く、書いた値が黙って捨てられてしまいます。
+ *  （管理に関する事項の8列がこれにあたりました）
+ *
+ *  そこで、読み書きの前に必ず列をそろえます。1回の実行のあいだは
+ *  結果を覚えておくので、シートを何度読んでも確認は1回だけです。
+ * ---------------------------------------------------------- */
+
+/** シート名 → あるべき列 */
+const SHEET_COLS = {};
+SHEET_COLS[SH.DAILY] = COLS.DAILY;
+SHEET_COLS[SH.STAFF] = COLS.STAFF;
+SHEET_COLS[SH.TERM]  = COLS.TERM;
+SHEET_COLS[SH.LOG]   = COLS.LOG;
+
+/** この実行で確認済みのシート */
+const SCHEMA_CHECKED = {};
+
+/** 見出し行。末尾の空セルは見出しではないので落とす */
+function headerOf_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  const raw = sh.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  let width = raw.length;
+  while (width > 0 && raw[width - 1] === '') width--;
+  return raw.slice(0, width);
+}
+
+/** 足りていない列を返す */
+function missingColumns_(name, cols) {
+  const sh = ss_().getSheetByName(name);
+  if (!sh) return cols.slice();
+  const head = headerOf_(sh);
+  return cols.filter(function (c) { return head.indexOf(c) < 0; });
+}
+
+/** 足りない列があれば足す。シートが無いときは何もしない(table_ 側で知らせる) */
+function ensureColumns_(name) {
+  if (SCHEMA_CHECKED[name]) return;
+  const cols = SHEET_COLS[name];
+  if (!cols) { SCHEMA_CHECKED[name] = true; return; }
+  if (!ss_().getSheetByName(name)) return;
+
+  const missing = missingColumns_(name, cols);
+  SCHEMA_CHECKED[name] = true;          // 履歴を書く前に立てる(呼び戻りを避ける)
+  if (!missing.length) return;
+
+  ensureSheet_(name, cols);
+  console.log('シート「' + name + '」に列を追加しました: ' + missing.join('、'));
+  audit_('シートの列を自動追加', name + '：' + missing.join('、'), '');
+}
+
+/**
+ * ★ 手で実行して、シートの列がそろっているかを確かめます。
+ *    足りない列はその場で追加します。実行ログに結果が出ます。
+ */
+function checkSheets() {
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const cols = SHEET_COLS[name];
+    if (!ss_().getSheetByName(name)) {
+      console.log('［' + name + '］シートがありません。setup を実行してください');
+      return;
+    }
+    const missing = missingColumns_(name, cols);
+    if (!missing.length) {
+      console.log('［' + name + '］そろっています（' + cols.length + '列）');
+      return;
+    }
+    ensureSheet_(name, cols);
+    console.log('［' + name + '］列を追加しました: ' + missing.join('、'));
+  });
+  console.log('確認おわり');
 }
 
 function formatTextColumn_(sheetName, colName) {
@@ -234,6 +341,7 @@ function formatTextColumn_(sheetName, colName) {
  * 各行に _row(実際の行番号)が入るので、そのまま書き戻せます。
  */
 function table_(name) {
+  ensureColumns_(name);                 // 読む前に列をそろえる
   const sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('シートがありません: ' + name + '（setup() を実行してください）');
 
@@ -250,8 +358,23 @@ function table_(name) {
   return { sh: sh, header: header, rows: rows };
 }
 
+/**
+ * 見出しに無いキーを書こうとしていないか確かめる。
+ * ここを素通りさせると、値が保存されないのに成功したように見えてしまいます。
+ */
+function assertColumns_(t, patch) {
+  const unknown = Object.keys(patch).filter(function (k) {
+    return t.header.indexOf(k) < 0;
+  });
+  if (unknown.length) {
+    throw new Error('シート「' + t.sh.getName() + '」に次の列がありません: '
+      + unknown.join('、') + '。スクリプトエディタで checkSheets を実行してください');
+  }
+}
+
 /** 見出し名で指定した値だけを1行にまとめて書く(1回のsetValuesで済ませる) */
 function writeRow_(t, row, patch) {
+  assertColumns_(t, patch);
   const width = t.header.length;
   const cur = t.sh.getRange(row, 1, 1, width).getValues()[0];
   t.header.forEach(function (h, j) {
@@ -262,6 +385,7 @@ function writeRow_(t, row, patch) {
 
 /** 末尾に1行追加して、その行番号を返す */
 function appendRow_(t, patch) {
+  assertColumns_(t, patch);
   const rowValues = t.header.map(function (h) {
     return patch.hasOwnProperty(h) ? patch[h] : '';
   });
@@ -765,6 +889,15 @@ function weekPayload_(anchorIso) {
     }),
     auth: authPayload_(staff),
     ranges: CFG.RANGES,
+    // 紙の設定はここが唯一の出どころ。画面のブラウザ印刷にも同じ値を使わせ、
+    // 「印刷」と「PDFを出力」で刷り上がりが食い違わないようにする
+    paper: {
+      page: CFG.PDF.PAGE,
+      landscape: CFG.PDF.LANDSCAPE,
+      marginIn: CFG.PDF.MARGIN_IN
+    },
+    // 前回までの実測。出力を始める前に「およそ○分」を出すために渡します
+    exportRate: { secPerWeek: Number(PROP.getProperty(PRINT.RATE_KEY)) || 0 },
     days: days
   };
 }
@@ -1074,6 +1207,7 @@ function sweepStaleLocks() {
 
 const PRINT = {
   JOB_KEY: 'PRINT_JOB',
+  RATE_KEY: 'EXPORT_SEC_PER_WEEK',   // 1週あたりの実測(次回の見込みに使う)
   OUT_FOLDER: '業務日報_出力',
   TIME_BUDGET_MS: 4.5 * 60 * 1000,   // 6分の上限に対して余裕を取る
   DAY_ROWS: 7
@@ -1390,10 +1524,21 @@ function xferLine_(d) {
   return parts.filter(function (x) { return x; }).join('／');
 }
 
-/** 管理者印に押す人。設定により、承認前でもその日の管理薬剤師を押す */
+/**
+ * 管理者印に押す人。
+ *
+ * 承認した人がいればその人、いなければその日に在任している管理薬剤師です。
+ * 管理者印は運用上「毎日押されるもの」なので、記録の有無や承認の有無で
+ * 押す押さないを判定しません。
+ *
+ * 結果として、管理薬剤師の交代日をまたがない限り、どの週も管理者印の
+ * 並びが同じになります。sealBase_ がそれを見て、押し終えたシートを
+ * 期間まるごと使い回します。
+ */
 function sealOwnerAdmin_(d) {
   if (d.admin) return d.admin;
-  return CFG.SEAL_POLICY.ADMIN_EVERY_DAY ? d.chief : '';
+  if (!CFG.SEAL_POLICY.ADMIN_EVERY_DAY) return '';
+  return d.chief;
 }
 
 function outOfRange_(v, range) {
@@ -1404,14 +1549,54 @@ function outOfRange_(v, range) {
  * テンプレートをコピーして1週間分を書き込み、そのシートを返す。
  * 記録のない日はテンプレートの見た目を残します(白紙のまま印刷できるように)。
  */
-function renderWeekSheet_(target, startIso, rows, seals) {
+/**
+ * 印影を置く位置の計算に使う寸法。
+ * テンプレートで決まっていて週ごとに変わらないので、出力の最初に1回だけ読みます。
+ * これを1コマごとに読むと、書き込みの列に読み取りが割り込み、
+ * そのたびにシートへの反映待ちが起きて目に見えて遅くなります。
+ */
+function stampGeometry_(tpl) {
   const t = T_();
-  const sh = templateSheet_().copyTo(target);
+  const sh = tpl || templateSheet_();
+  const colW = {};
+  [t.COL.STAFF, t.COL.ADMIN].forEach(function (c) { colW[c] = sh.getColumnWidth(c); });
+  const rowH = {};
+  for (let i = 0; i < PRINT.DAY_ROWS; i++) {
+    const r = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
+    rowH[r] = sh.getRowHeight(r);
+  }
+  return { colW: colW, rowH: rowH };
+}
+
+/**
+ * 1週間ぶんを流し込む。
+ *
+ * 値の書き込みと印影の貼り付けを分けてあります。
+ * 印影は1枚ずつシートと往復し、しかも保留していた書き込みを
+ * その場で反映させるため、混ぜて書くと値の反映が日数ぶんに分断されます。
+ * 先に値をぜんぶ書いて1回で反映させ、そのあと印影を貼ります。
+ *
+ * @param {Object}  done      複製元で押し済みか {adminDone, staffDone}
+ * @param {Object}  timing    渡すと、処理ごとの所要時間(ミリ秒)を書き込みます
+ */
+function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing) {
+  const adminDone = !!(done && done.adminDone);
+  const staffDone = !!(done && done.staffDone);
+  const t = T_();
+  const R = CFG.RANGES;
+  const mark = function (key, from) {
+    if (timing) timing[key] = (timing[key] || 0) + (Date.now() - from);
+  };
+
+  /* ---- 1. テンプレートを複製する ---- */
+  let t0 = Date.now();
+  const sh = (tpl || templateSheet_()).copyTo(target);
   sh.setName(startIso);
   sh.showSheet();
+  mark('copy', t0);
 
-  const R = CFG.RANGES;
-
+  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ---- */
+  t0 = Date.now();
   rows.forEach(function (r, i) {
     const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
     const r2 = r1 + 1;
@@ -1436,13 +1621,123 @@ function renderWeekSheet_(target, startIso, rows, seals) {
     if (outOfRange_(r.roomHumid, R.ROOM_HUMID)) redCell_(sh, r1, t.COL.ROOM_H);
     if (outOfRange_(r.coldTemp,  R.COLD_TEMP))  redCell_(sh, r1, t.COL.COLD_T);
     if (outOfRange_(r.coldHumid, R.COLD_HUMID)) redCell_(sh, r1, t.COL.COLD_H);
-
-    // 印影。Blobは呼び出し元で1回だけ読んであるので、ここではDriveを叩かない
-    stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin]);
-    stampCell_(sh, r1, t.COL.STAFF, seals[r.staff]);
   });
 
+  // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
+  // （四隅が欠けて見える原因）。少し太くしておくと欠けずに残ります。
+  // 内側の罫線は null を渡して触りません。
+  sh.getRange(1, 1, t.HEAD_ROWS + PRINT.DAY_ROWS * t.ROWS_PER_DAY, t.COLS)
+    .setBorder(true, true, true, true, null, null,
+               t.RULE, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+  SpreadsheetApp.flush();          // ここまでを1回で反映させる
+  mark('values', t0);
+
+  /* ---- 3. 印影を貼る(ここが出力時間のほとんど) ---- */
+  t0 = Date.now();
+  let n = 0;
+  rows.forEach(function (r, i) {
+    const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
+    if (!adminDone && stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin], geo)) n++;
+    if (!staffDone && stampCell_(sh, r1, t.COL.STAFF, seals[r.staff], geo)) n++;
+  });
+  mark('seals', t0);
+  if (timing) timing.sealCount = (timing.sealCount || 0) + n;
+
   return sh;
+}
+
+/**
+ * 管理者印を押し終えた「下ごしらえのシート」を作って使い回す。
+ *
+ * 管理者印はその週の7日ぶんが同じ並びになることがほとんどです。
+ * 1コマずつ押すと1週あたり7枚ぶん往復しますが、押し終えたシートを
+ * 複製すれば、2週目からは0枚で済みます。
+ *
+ * 複製で画像が引き継がれるかは環境しだいなので、最初に1度だけ
+ * 実際に複製して確かめ、駄目なら1コマずつ押す方式に戻します。
+ */
+/**
+ * その週の押印の並び。同じ並びなら、押し終えたシートを使い回せます。
+ *
+ * 押す場所は曜日で決まっている(1日目は3行目、2日目は5行目…)ので、
+ * 「誰の印がどの位置に来るか」は名前を並べただけで言い表せます。
+ *
+ *   admin … 管理者印の並びだけ。管理薬剤師は交代しない限り毎日同じ
+ *   full  … 担当者印もあわせた並び。曜日ごとの担当が毎週同じなら一致する
+ */
+function sealKeys_(rows) {
+  const a = rows.map(function (r) { return r.admin || ''; }).join('|');
+  const b = rows.map(function (r) { return r.staff || ''; }).join('|');
+  return { admin: a, full: a + '#' + b };
+}
+
+/**
+ * 押印を済ませた「下ごしらえのシート」を作って使い回す。
+ *
+ * 印影の貼り付けは1枚ずつシートと往復するため、ここが出力時間のほとんどです。
+ * 押す位置は曜日で決まっているので、同じ並びの週なら押し終えたシートを
+ * 複製するだけで済みます。
+ *
+ *   ・担当者印まで一致する週があるなら、1週ぶん14枚を丸ごと引き継ぐ
+ *   ・そこまで一致しなくても、管理者印7枚だけは引き継げることが多い
+ *
+ * 1度しか出てこない並びには作りません(複製1回ぶん損になるため)。
+ * 複製で画像が引き継がれるかは環境しだいなので、最初に1枚だけ押して
+ * 確かめ、駄目なら1コマずつ押す方式へ自動で戻ります。
+ */
+function sealBase_(temp, tpl, rows, seals, geo, cache) {
+  const none = { sheet: tpl, adminDone: false, staffDone: false };
+  if (!cache.ok) return none;
+
+  const k = sealKeys_(rows);
+
+  // すでに作ってあるものを優先する
+  if (cache.map[k.full])  return { sheet: cache.map[k.full],  adminDone: true, staffDone: true };
+  if (cache.map[k.admin]) return { sheet: cache.map[k.admin], adminDone: true, staffDone: false };
+
+  // 担当者印まで一致する週が2回以上あるなら、そちらで作る
+  const withStaff = (cache.count[k.full] || 0) >= 2;
+  const key = withStaff ? k.full : k.admin;
+  if (!withStaff && (cache.count[k.admin] || 0) < 2) return none;
+
+  const t = T_();
+  const rowAt = function (i) { return t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY; };
+
+  // 押す順番を先に組み立てる。押すものが無いなら下ごしらえの意味がない
+  const plan = [];
+  rows.forEach(function (r, i) {
+    if (seals[r.admin]) plan.push({ i: i, at: t.COL.ADMIN, blob: seals[r.admin] });
+    if (withStaff && seals[r.staff]) plan.push({ i: i, at: t.COL.STAFF, blob: seals[r.staff] });
+  });
+  if (!plan.length) return none;
+
+  const base = tpl.copyTo(temp);
+  base.setName('_b' + Utilities.getUuid().slice(0, 8));
+
+  // まず1枚だけ押して、複製で引き継がれるか確かめる(無駄打ちを1枚に抑える)
+  stampCell_(base, rowAt(plan[0].i), plan[0].at, plan[0].blob, geo);
+
+  if (!cache.checked) {
+    cache.checked = true;
+    const probe = base.copyTo(temp);
+    const kept = probe.getImages().length;
+    temp.deleteSheet(probe);
+    if (!kept) {
+      console.warn('複製では印影が引き継がれないため、1コマずつ押す方式に切り替えます');
+      cache.ok = false;
+      temp.deleteSheet(base);
+      return none;
+    }
+  }
+
+  for (let n = 1; n < plan.length; n++) {
+    stampCell_(base, rowAt(plan[n].i), plan[n].at, plan[n].blob, geo);
+  }
+  base.hideSheet();
+
+  cache.map[key] = base;
+  return { sheet: base, adminDone: true, staffDone: withStaff };
 }
 
 /** 数値を入れて表示形式を合わせる。値が無い日はテンプレートのまま残す */
@@ -1460,15 +1755,17 @@ function redCell_(sh, row, col) {
 
 /** セルの中央に印影を置く。
  *  列幅・行の高さはシートから読むので、テンプレートを直しても中央のままです */
-function stampCell_(sh, row, col, blob) {
-  if (!blob) return;
-  const cw = sh.getColumnWidth(col);
-  const ch = sh.getRowHeight(row);
+function stampCell_(sh, row, col, blob, geo) {
+  if (!blob) return false;
+  // 寸法は stampGeometry_ で先に読んである。無いときだけその場で読む
+  const cw = (geo && geo.colW[col]) || sh.getColumnWidth(col);
+  const ch = (geo && geo.rowH[row]) || sh.getRowHeight(row);
   const size = Math.max(16, Math.min(cw, ch) - 6);   // セルからはみ出さない大きさ
   const img = sh.insertImage(blob, col, row,
                              Math.round((cw - size) / 2),
                              Math.round((ch - size) / 2));
   img.setWidth(size).setHeight(size);
+  return true;
 }
 
 /* ============================================================
@@ -1521,6 +1818,14 @@ function weeksBetween_(fromIso, toIso) {
  */
 function startExport(p) {
   return guard_('startExport', function () {
+    // 出力先の一時ファイルはジョブ1件ぶんしか覚えられない。
+    // 走っているうちに次を始めると、前の一時ファイルが行方不明になる
+    const cur = currentJob_();
+    if (cur && cur.state === 'running') {
+      throw new Error('別の出力を実行中です（' + cur.from + ' 〜 ' + cur.to
+        + '）。終わるのを待つか、いったん中止してください');
+    }
+
     const from = fmt_(p.from), to = fmt_(p.to);
     if (!from || !to) throw new Error('期間が正しくありません');
     if (from > to) throw new Error('開始日が終了日より後になっています');
@@ -1541,6 +1846,7 @@ function startExport(p) {
       from: from, to: to, title: title,
       weeks: weeks, done: 0,
       tempId: temp.getId(),
+      actor: String(p.actor || ''),
       startedAt: new Date().toISOString(),
       state: 'running', pdfUrl: '', message: ''
     };
@@ -1561,47 +1867,255 @@ function runExportChunk() {
     const idx = dailyIndex_();
     const terms = termList_();
     const seals = sealBlobMap_();          // 印影は1回だけ読む(ここが効く)
+    const tpl = templateSheet_();          // テンプレートの引き直しも1回に
+    const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
 
-    while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
-      const w = job.weeks[job.done];
-      const rows = weekRows_(w, idx, terms);
-      renderWeekSheet_(temp, w, rows, seals);
-      job.done++;
-      PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    // 管理者印を押し終えた下ごしらえシート。同じ並びの週で使い回す。
+    // どの並びが何回出るかを先に数えておき、2回以上のものだけ用意します
+    // (1回きりなら、下ごしらえの複製ぶんだけ損になるため)
+    const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
+    for (let i = job.done; i < job.weeks.length; i++) {
+      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms));
+      base.count[k.admin] = (base.count[k.admin] || 0) + 1;
+      base.count[k.full]  = (base.count[k.full]  || 0) + 1;
     }
 
-    if (job.done >= job.weeks.length) {
-      finishExport_(job, temp);
+    try {
+      while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
+        const w = job.weeks[job.done];
+        const rows = weekRows_(w, idx, terms);
+        const b = sealBase_(temp, tpl, rows, seals, geo, base);
+        renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
+        job.done++;
+        PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+      }
+
+      if (job.done >= job.weeks.length) {
+        finishExport_(job, temp);
+      }
+    } catch (err) {
+      // 途中で落ちたまま放っておくと、一時ファイルがドライブに残り、
+      // ジョブも running のままで次の出力を始められなくなる
+      job.state = 'error';
+      job.message = String(err && err.message ? err.message : err);
+      trashTemp_(job);
+      PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+      throw err;
     }
     return job;
   });
 }
 
-/** すべての週が終わったらPDFにして、一時ファイルを片づける */
-function finishExport_(job, temp) {
-  const first = temp.getSheetByName('_');
-  if (first) temp.deleteSheet(first);
-  SpreadsheetApp.flush();
-
-  const pdf = exportPdf_(temp.getId(), job.title);
-  const file = outFolder_().createFile(pdf);
-
-  DriveApp.getFileById(temp.getId()).setTrashed(true);
-
-  job.state = 'done';
-  job.pdfUrl = file.getUrl();
-  job.finishedAt = new Date().toISOString();
-  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
-
-  audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', '');
+/**
+ * 1週あたりに何秒かかったかを覚えておく。
+ * 次に出力を始めるとき「およそ○分かかります」と先に出すために使います。
+ * 極端な値は捨て、前回の値と半分ずつ混ぜてならします。
+ *
+ * 画面から出したときは往復の待ちも含んだ実測、エディタから手で
+ * 実行したときは含まれません。あくまで目安として扱ってください。
+ */
+function rememberRate_(job) {
+  try {
+    const weeks = (job.weeks || []).length;
+    if (!weeks || !job.startedAt) return;
+    const sec = (Date.now() - new Date(job.startedAt).getTime()) / 1000 / weeks;
+    if (!isFinite(sec) || sec <= 0 || sec > 600) return;
+    const prev = Number(PROP.getProperty(PRINT.RATE_KEY)) || 0;
+    const next = prev ? (prev * 0.5 + sec * 0.5) : sec;
+    PROP.setProperty(PRINT.RATE_KEY, String(Math.round(next * 10) / 10));
+  } catch (e) {
+    console.warn('出力の所要時間を覚えられませんでした: ' + e);
+  }
 }
 
-/** スプレッドシート全体をPDFにする(A4横・幅に合わせる) */
+/** 一時スプレッドシートを捨てる。成否にかかわらず必ず通す */
+function trashTemp_(job) {
+  if (!job || !job.tempId) return;
+  try {
+    DriveApp.getFileById(job.tempId).setTrashed(true);
+  } catch (e) {
+    console.warn('一時ファイルを片づけられませんでした: ' + e);
+  }
+  job.tempId = '';
+}
+
+/** すべての週が終わったらPDFにして、一時ファイルを片づける */
+function finishExport_(job, temp) {
+  try {
+    // 既定のシートと、下ごしらえ用のシート(_で始まる)をすべて消す
+    temp.getSheets().forEach(function (x) {
+      if (String(x.getName()).charAt(0) === '_') temp.deleteSheet(x);
+    });
+    SpreadsheetApp.flush();
+
+    const pdf = exportPdf_(job.tempId, job.title);
+    const file = outFolder_().createFile(pdf);
+
+    job.state = 'done';
+    job.pdfUrl = file.getUrl();
+    job.finishedAt = new Date().toISOString();
+    rememberRate_(job);        // 次に出すときの「およそ何分」に使う
+    audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+  } catch (e) {
+    job.state = 'error';
+    job.message = String(e && e.message ? e.message : e);
+    throw e;
+  } finally {
+    trashTemp_(job);
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+  }
+}
+
+/**
+ * 帳票が紙に原寸で収まるかを調べる。
+ * 収まるなら縮小をやめられます。縮小すると帳票の幅が
+ * 「印刷できる幅」とぴったり同じになり、外枠が切り取り線の真上に来ます。
+ */
+function printFit_() {
+  const t = T_();
+  const cfg = CFG.PDF;
+  const rows = t.HEAD_ROWS + PRINT.DAY_ROWS * t.ROWS_PER_DAY;
+
+  let w = 0, h = 0;
+  try {
+    const sh = templateSheet_();
+    for (let c = 1; c <= t.COLS; c++) w += sh.getColumnWidth(c);
+    for (let r = 1; r <= rows; r++) h += sh.getRowHeight(r);
+  } catch (e) {
+    return null;
+  }
+
+  const pageW = cfg.LANDSCAPE ? 297 : 210;   // A4 (mm)
+  const pageH = cfg.LANDSCAPE ? 210 : 297;
+  const availW = (pageW / 25.4 - cfg.MARGIN_IN * 2) * 96;   // シートの1pxは1/96インチ
+  const availH = (pageH / 25.4 - cfg.MARGIN_IN * 2) * 96;
+
+  return {
+    width: w, height: h,
+    availW: availW, availH: availH,
+    fits: (w + cfg.EDGE_GAP_PX <= availW) && (h + cfg.EDGE_GAP_PX <= availH),
+    scale: Math.min(1, availW / w)
+  };
+}
+
+/**
+ * ★ 手で実行して、出力のどこに時間がかかっているかを測ります。
+ *    1週間ぶんだけ作って、複製・値の書き込み・印影に分けて出します。
+ *    速くしたいときは、まずこれで当たりを付けてください。
+ */
+function benchmarkExport() {
+  const idx = dailyIndex_();
+  const terms = termList_();
+  const tpl = templateSheet_();
+  const start = addDays_(weekStart_(today_()), -7);   // 先週(記録がある想定)
+
+  let t0 = Date.now();
+  const seals = sealBlobMap_();
+  const tSeals = Date.now() - t0;
+
+  t0 = Date.now();
+  const geo = stampGeometry_(tpl);
+  const tGeo = Date.now() - t0;
+
+  t0 = Date.now();
+  const temp = SpreadsheetApp.create('_ベンチマーク_' + stamp_());
+  const tCreate = Date.now() - t0;
+
+  try {
+    const rows = weekRows_(start, idx, terms);
+    const timing = {};
+    const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
+    const k = sealKeys_(rows);
+    base.count[k.admin] = 2;           // 実際の出力では使い回す前提で測る
+    base.count[k.full]  = 2;
+
+    t0 = Date.now();
+    const b = sealBase_(temp, tpl, rows, seals, geo, base);
+    const tBase = Date.now() - t0;
+
+    renderWeekSheet_(temp, start, rows, seals, geo, b.sheet, b, timing);
+    SpreadsheetApp.flush();
+
+    const total = tSeals + tGeo + tCreate + tBase
+      + (timing.copy || 0) + (timing.values || 0) + (timing.seals || 0);
+    const pct = function (ms) { return Math.round(ms / total * 100) + '%'; };
+    const line = function (label, ms) {
+      console.log('   ' + label + ' … ' + (ms / 1000).toFixed(1) + '秒 (' + pct(ms) + ')');
+    };
+
+    console.log('■ 1週間ぶんの内訳（' + start + ' の週）');
+    line('印影をDriveから読む  ', tSeals);
+    line('テンプレートの寸法   ', tGeo);
+    line('一時ファイルを作る   ', tCreate);
+    line('管理者印の下ごしらえ ', tBase);
+    line('テンプレートの複製   ', timing.copy || 0);
+    line('値の書き込み         ', timing.values || 0);
+    line('印影を貼る           ', timing.seals || 0);
+    console.log('   ────────────────────────');
+    console.log('   合計 ' + (total / 1000).toFixed(1) + '秒');
+    console.log('');
+    console.log('■ この週で貼った印影 ' + (timing.sealCount || 0) + ' 枚'
+      + (b.staffDone ? '（担当者印・管理者印とも下ごしらえから引き継ぎ）'
+        : b.adminDone ? '（管理者印は下ごしらえから引き継ぎ）' : '（1コマずつ）'));
+    console.log('');
+    console.log('■ 2週目からの見込み');
+    console.log('   下ごしらえと一時ファイルの作成は1回だけなので、'
+      + ((((timing.copy || 0) + (timing.values || 0) + (timing.seals || 0))) / 1000).toFixed(1)
+      + '秒/週 が目安です');
+    return timing;
+  } finally {
+    try { DriveApp.getFileById(temp.getId()).setTrashed(true); } catch (e) { /* 既に無い */ }
+  }
+}
+
+/**
+ * ★ 手で実行して、帳票が紙に収まるかを確かめます。
+ *    外枠が欠けるときは、まずこれで縮小率を見てください。
+ */
+function checkPrintFit() {
+  const f = printFit_();
+  if (!f) { console.log('帳票テンプレートが読めませんでした'); return; }
+  const mm = function (px) { return (px / 96 * 25.4).toFixed(1) + 'mm'; };
+  const cfg = CFG.PDF;
+
+  console.log('■ 帳票の実寸');
+  console.log('   幅 ' + f.width + 'px (' + mm(f.width) + ')  高 '
+    + f.height + 'px (' + mm(f.height) + ')');
+  console.log('■ ' + cfg.PAGE + (cfg.LANDSCAPE ? '横' : '縦')
+    + '・余白' + cfg.MARGIN_IN + 'インチ のとき印刷できる範囲');
+  console.log('   幅 ' + Math.round(f.availW) + 'px (' + mm(f.availW) + ')  高 '
+    + Math.round(f.availH) + 'px (' + mm(f.availH) + ')');
+  console.log('■ 結果');
+  if (f.fits) {
+    console.log('   原寸で収まります。縮小せずに出力するので、外枠は欠けません。');
+  } else {
+    console.log('   はみ出すので ' + Math.round(f.scale * 1000) / 10 + '% に縮小します。');
+    console.log('   縮小すると帳票の幅が印刷できる幅と一致し、外枠が切り取り線の');
+    console.log('   真上に来ます（四隅が欠けて見える原因）。外枠は太くしてあるので');
+    console.log('   欠けにくくしていますが、気になるときは次のどちらかを。');
+    console.log('     ・CFG.PDF.MARGIN_IN を 0.2 に下げる（原寸で収まるようになります）');
+    console.log('     ・帳票テンプレートの列幅を合計 '
+      + Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW) + 'px ぶん詰める');
+  }
+  return f;
+}
+
+/** スプレッドシート全体をPDFにする */
 function exportPdf_(ssId, name) {
+  const cfg = CFG.PDF;
+  const m = cfg.MARGIN_IN;
+  const fit = printFit_();
+  // 収まるなら縮めない。縮めると外枠が紙の端に貼りついて欠けやすくなる
+  const fitw = !(fit && fit.fits);
+
   const url = 'https://docs.google.com/spreadsheets/d/' + ssId + '/export'
-    + '?format=pdf&size=A4&portrait=false&fitw=true'
+    + '?format=pdf&size=' + cfg.PAGE
+    + '&portrait=' + (cfg.LANDSCAPE ? 'false' : 'true')
+    + '&fitw=' + (fitw ? 'true' : 'false')
     + '&gridlines=false&printtitle=false&sheetnames=false&pagenum=CENTER'
-    + '&top_margin=0.4&bottom_margin=0.4&left_margin=0.4&right_margin=0.4';
+    + '&horizontal_alignment=CENTER&vertical_alignment=TOP'
+    + '&top_margin=' + m + '&bottom_margin=' + m
+    + '&left_margin=' + m + '&right_margin=' + m;
 
   const res = UrlFetchApp.fetch(url, {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
@@ -1640,17 +2154,19 @@ function cancelExport() {
   return guard_('cancelExport', function () {
     const job = currentJob_();
     if (!job) return null;
-    if (job.state === 'running' && job.tempId) {
-      try { DriveApp.getFileById(job.tempId).setTrashed(true); } catch (e) { /* 既に無い */ }
-    }
+    trashTemp_(job);
     job.state = 'canceled';
     PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    audit_('帳票の出力を中止', job.from + ' 〜 ' + job.to, job.actor || '');
     return job;
   });
 }
 
+/** ★ 出力の記録を消す。一時ファイルが残っていれば一緒に片づけます */
 function clearExport() {
   return guard_('clearExport', function () {
+    const job = currentJob_();
+    if (job) trashTemp_(job);
     PROP.deleteProperty(PRINT.JOB_KEY);
     return null;
   });
@@ -1660,27 +2176,41 @@ function clearExport() {
  *  5. 手動で使うショートカット
  * ========================================================== */
 
-/** 今週分だけ出す */
-function exportThisWeek() {
-  const w = weekStart_(today_());
-  startExport({ from: w, to: addDays_(w, 6), title: w + '_週報' });
+/**
+ * 画面から呼ぶのと同じ経路で最後まで走らせる。
+ * 手で実行するショートカットは、どれもこれを通します。
+ */
+function runExportNow_(from, to, title) {
+  clearExport();                       // 前の記録が残っていても始められるように
+  startExport({ from: from, to: to, title: title, actor: '手動実行' });
   let job = runExportChunk();
   while (job && job.state === 'running') job = runExportChunk();
-  Logger.log(job && job.pdfUrl ? 'PDF: ' + job.pdfUrl : '出力できませんでした');
+
+  if (job && job.state === 'done') Logger.log('PDF: ' + job.pdfUrl);
+  else Logger.log('出力できませんでした: ' + ((job && job.message) || '理由不明'));
+  return job;
 }
 
-/** 前月分を出す */
+/** ★ 今週分だけ出す */
+function exportThisWeek() {
+  const w = weekStart_(today_());
+  return runExportNow_(w, addDays_(w, 6), w + '_週報');
+}
+
+/** ★ 前月分を出す */
 function exportLastMonth() {
   const now = new Date();
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
-  startExport({
-    from: fmt_(first), to: fmt_(last),
-    title: Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分'
-  });
-  let job = runExportChunk();
-  while (job && job.state === 'running') job = runExportChunk();
-  Logger.log(job && job.pdfUrl ? 'PDF: ' + job.pdfUrl : '出力できませんでした');
+  return runExportNow_(fmt_(first), fmt_(last),
+    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分');
+}
+
+/** ★ 表示中の月を出す(記録簿のボタンと同じ範囲) */
+function exportThisMonth() {
+  const t = today_();
+  return runExportNow_(monthStart_(t), monthEnd_(t),
+    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分');
 }
 
 /* ############################################################

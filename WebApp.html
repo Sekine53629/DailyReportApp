@@ -159,7 +159,7 @@ button,input,select{font:inherit;color:inherit}
 .cols{display:grid;gap:16px}
 @media (min-width:880px){
   .cols{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);align-items:start}
-  .col-right{position:sticky;top:76px}
+  .col-right{position:sticky;top:88px}
 }
 
 /* ============================================================
@@ -401,6 +401,46 @@ button,input,select{font:inherit;color:inherit}
   color:inherit;text-decoration:underline;cursor:pointer}
 
 /* ============================================================
+   画面の切り替え(トップバーの丸ボタン)
+   入力 / 記録簿 / 出力 を行き来する。同時に出すと縦に長くなるので、
+   選んだ画面だけを表示する。名簿だけは設定なのでモーダルのまま。
+   ============================================================ */
+.topnav{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.topnav .navsep{width:1px;height:26px;background:var(--line);margin:0 1px;align-self:center}
+
+.navcircle{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:0;padding:0;cursor:pointer;flex:0 0 auto;
+}
+.navcircle .ring{
+  width:38px;height:38px;border-radius:50%;
+  border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);
+  display:grid;place-items:center;
+  transition:background .12s ease, border-color .12s ease, transform .08s ease;
+}
+.navcircle .ring svg{
+  width:19px;height:19px;stroke:var(--ink-2);fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+.navcircle .cap{font-size:9.5px;color:var(--muted);letter-spacing:.04em;line-height:1}
+.navcircle:hover .ring{border-color:var(--line-strong)}
+.navcircle:active .ring{transform:translateY(1px)}
+/* 選択中。名簿ボタンは aria-pressed を持たないので光らない */
+.navcircle[aria-pressed="true"] .ring{background:var(--accent);border-color:var(--accent)}
+.navcircle[aria-pressed="true"] .ring svg{stroke:var(--accent-ink)}
+.navcircle[aria-pressed="true"] .cap{color:var(--accent);font-weight:700}
+/* 記録簿に未保存があるときの目印 */
+.navcircle .dot{
+  position:absolute;top:-1px;right:-1px;width:9px;height:9px;border-radius:50%;
+  background:var(--warn);border:2px solid var(--ground);
+}
+.navcircle .ring{position:relative}
+@media (max-width:380px){
+  .navcircle .ring{width:34px;height:34px}
+  .navcircle .cap{font-size:9px}
+}
+
+/* ============================================================
    担当者の管理(モーダル)
    ============================================================ */
 .iconbtn{
@@ -543,9 +583,10 @@ button,input,select{font:inherit;color:inherit}
 .formrow select:focus,.formrow input:focus{outline:none;border-color:var(--accent)}
 .formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
 
-/* ---- 帳票の出力 ---- */
-/* 帳票は横に広いので、この画面だけシートを広く取る */
-#pvOverlay .sheet{max-width:960px}
+/* ---- 帳票の出力(独立した画面) ---- */
+/* 帳票そのものに幅を回したいので、枠の内側は詰める */
+#viewExport .card-bd{padding:12px}
+@media (max-width:640px){ #viewExport .card-bd{padding:8px} }
 .presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .range input[type="date"]{
@@ -558,19 +599,88 @@ button,input,select{font:inherit;color:inherit}
 .pvwrap{
   background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
   padding:10px;overflow-x:auto;margin-bottom:6px;
+  width:fit-content;max-width:100%;margin-left:auto;margin-right:auto;
 }
-/* シートの実寸で描くため、横に収まらないときは中で横スクロールする */
-.pvwrap table.pv{margin:0 auto}
-table.pv{border-collapse:collapse;table-layout:fixed;font-size:10px}
+/* シートの実寸で描く。画面に収まらないときは縮めて全体を見せる
+   (拡大はしない。実寸より大きいと、刷ったときの印象とずれるため) */
+.pvwrap table.pv{margin:0 auto;transform-origin:top left}
+.pvwrap.fit{overflow-x:hidden}
+.pvwrap.fit table.pv{margin:0}
+.pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
+.pvscale:empty{display:none}
+/* ============================================================
+   出力の進み具合(画面下に固定)
+   長い出力では画面を見ていられないので、スクロールしても
+   画面を移動しても、いつでも残り時間が見えるようにする。
+   ============================================================ */
+.jobbar[hidden]{display:none}
+.jobbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:55;
+  background:color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-top:1px solid var(--line);
+  box-shadow:0 -6px 20px -10px rgba(22,33,29,.35);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.jb-in{
+  max-width:1200px;margin:0 auto;
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+}
+.jb-main{flex:1;min-width:240px}
+.jb-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.jb-head b{font-family:var(--disp);font-size:13px;font-weight:700;color:var(--ink-2)}
+.jb-head span{
+  font-family:var(--mono);font-size:12px;color:var(--muted);
+  font-variant-numeric:tabular-nums;
+}
+.jb-bar{
+  height:8px;background:var(--surface-2);border-radius:999px;
+  overflow:hidden;margin:6px 0 5px;
+}
+.jb-bar i{
+  display:block;height:100%;background:var(--accent);width:0;
+  transition:width .3s ease;
+}
+.jb-time{
+  font-size:11.5px;color:var(--muted);line-height:1.6;
+  font-variant-numeric:tabular-nums;
+}
+.jb-time b{color:var(--ink-2);font-weight:700}
+.jb-act{display:flex;gap:8px;flex:0 0 auto}
+.jb-act .btn{margin-top:0}
+
+/* 終わったとき・失敗したとき */
+.jobbar.done{border-top-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.jobbar.done .jb-head b{color:var(--ok)}
+.jobbar.err{border-top-color:color-mix(in srgb,var(--crit) 45%,transparent)}
+.jobbar.err .jb-head b{color:var(--crit)}
+.jobbar a{color:var(--accent);font-weight:700}
+
+/* 帯のぶんだけ本文を持ち上げ、通知バーもぶつからない位置へ */
+body.jobbar-on{padding-bottom:calc(96px + env(safe-area-inset-bottom))}
+body.jobbar-on .toast{bottom:calc(104px + env(safe-area-inset-bottom))}
+
+@media (max-width:520px){
+  .jb-act{width:100%}
+  .jb-act .btn{flex:1}
+}
+/* 書体は帳票(スプレッドシート)側に合わせる。
+   画面のプレビューと刷り上がりの印象をそろえるため、
+   ここだけは画面用の書体を使わない */
+table.pv{
+  border-collapse:collapse;table-layout:fixed;font-size:10px;
+  font-family:Arial,"Yu Gothic","Hiragino Kaku Gothic ProN",Meiryo,sans-serif;
+  font-variant-numeric:tabular-nums;
+}
 table.pv th,table.pv td{border:1px solid #2b3330;padding:2px 4px;vertical-align:middle}
-table.pv th{background:#f4f6f5;font-family:var(--disp);font-size:8.5px;text-align:center;
+table.pv th{background:#f4f6f5;font-size:8.5px;text-align:center;
   font-weight:700;line-height:1.3}
 table.pv th.subhd{font-weight:400;font-size:7.5px;color:#3d4a45}
 table.pv td.dt{text-align:center;line-height:1.35;font-size:8.5px}
 table.pv td.dt b{display:block;font-size:10px}
-table.pv td.n{text-align:right;font-family:var(--mono);font-size:10.5px}
+table.pv td.n{text-align:right;font-size:10.5px}
 table.pv td.u{text-align:left;font-size:7.5px;color:#3d4a45}
-table.pv td.e{text-align:right;font-family:var(--mono);font-size:9.5px;white-space:nowrap}
+table.pv td.e{text-align:right;font-size:9.5px;white-space:nowrap}
 table.pv td.e.ng{color:#c42a26;font-weight:700}
 table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
 table.pv td.st{text-align:center;padding:1px}
@@ -619,7 +729,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
    ============================================================ */
 .lgview[hidden]{display:none}
-.lgview{max-width:1180px;margin:0 auto;padding:0 14px 60px}
+.lgview{max-width:1200px;margin:0 auto;padding:0 14px 60px}
 
 .lg-bar{
   position:sticky;top:0;z-index:25;
@@ -677,6 +787,10 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
 .lg-week > h3 .pg.right{margin-left:auto}
 
+/* 帳票は 1071px と幅が決まっている。枠を画面いっぱいに広げると
+   右側に大きな余白ができるので、中身に合わせて中央に置く */
+.lg-week{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
+
 /* 帳票そのもの。画面の1枚 = 印刷の1ページ */
 .lg-sheet{
   background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
@@ -705,7 +819,7 @@ table.pv td.dt .rowact:empty{display:none}
 table.pv td.ed{padding:0;background:#fffdf3}
 table.pv td.ed input{
   width:100%;border:0;background:transparent;padding:3px 4px;
-  font-family:var(--mono);font-size:10.5px;text-align:right;color:#111614;
+  font-family:inherit;font-size:10.5px;text-align:right;color:#111614;
 }
 table.pv td.ed input:focus{outline:2px solid #0f766e;outline-offset:-2px;background:#fff}
 table.pv td.nt.ed{padding:1px}
@@ -735,21 +849,63 @@ table.pv td.st i.pend{
 .lead-note{font-size:12.5px;color:var(--muted);margin:0 0 14px;line-height:1.7}
 
 /* ============================================================
-   印刷(Ctrl+P で記録簿をそのまま刷るとき)
-   PDF出力ボタンは帳票テンプレート経由なので、こちらは補助的な経路。
+   印刷
+   画面に出ている帳票を、そのまま紙に落とします。
+   サーバーを介さないので待ち時間がありません。
+   ドライブにPDFを残したいときは「PDFを出力」を使ってください。
    ============================================================ */
 @media print{
+  /* 画面のための部品は紙に出さない */
   .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
-  #boot,#demoBar,.footnote{display:none !important}
-  body{background:#fff}
-  .shell{padding:0}
-  .lgview{max-width:none;padding:0}
-  .lg-week{page-break-after:always;break-after:page;margin:0}
+  #boot,#demoBar,.footnote,.presets,.range,.pvnote,.pvscale,
+  .progress,.donebox,.actions,.jobbar{display:none !important}
+  body.jobbar-on{padding-bottom:0}
+
+  body{background:#fff;padding:0}
+  .shell{padding:0;margin:0}
+  .lgview{max-width:none;padding:0;margin:0}
+  .card{border:0;box-shadow:none;background:#fff}
+  #viewExport .card-bd{padding:0}
+
+  /* 1週 = 1ページ */
+  .lg-week{page-break-after:always;break-after:page;margin:0;width:auto;max-width:none}
   .lg-week:last-child{page-break-after:auto;break-after:auto}
   .lg-week > h3{display:none}
-  .lg-sheet{border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important}
-  table.pv td.st i.pend{display:none}
-  @page{size:A4 landscape;margin:8mm}
+  .lg-sheet,.pvwrap{
+    border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important;
+    width:auto;max-width:none;height:auto !important;margin:0;
+  }
+
+  /* 罫線と見出しの地色。既定では背景が落ちるので、出すよう指定する。
+     倍率は beforeprint で実測した値(--pscale)を当てる */
+  table.pv{
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+    transform:scale(var(--pscale,1));transform-origin:top left;margin:0;
+  }
+  table.pv th{background:#f4f6f5 !important}
+  table.pv td.e.ng{color:#c42a26 !important}
+
+  /* 画面でしか使わない色分けは紙に出さない(帳票の見た目を崩さないため) */
+  table.pv tr.lg-out td,table.pv tr.lg-fut td,table.pv tr.lg-dirty td,
+  table.pv tr.lg-miss td.dt,table.pv tr.lg-appr td.dt,
+  table.pv td.ed{background:transparent !important}
+  table.pv tr.lg-saving td{opacity:1}
+  table.pv td.st i.pend,table.pv td.dt .rowact{display:none !important}
+
+  /* 編集中でも、紙には値だけが出るようにする */
+  table.pv td.ed{padding:2px 4px}
+  table.pv td.ed input,.stsel,.notebtn{
+    border:0 !important;background:transparent !important;
+    -webkit-appearance:none;appearance:none;box-shadow:none !important;
+  }
+  .notebtn{padding:0 !important;font-size:8px;color:#111614 !important}
+  .notebtn.empty{visibility:hidden}   /* 「＋ 譲渡・譲受を記入」は紙に出さない */
+
+  /* 外枠。PDF出力側も太くしてあるので、刷り比べたときに揃うようにする */
+  table.pv{border:2px solid #2b3330}
+
+  /* @page(用紙・向き・余白)は applyPaper_ が作ります。
+     サーバーの CFG.PDF が唯一の出どころで、PDF出力と同じ値を使います。 */
 }
 </style>
 </head>
@@ -767,26 +923,38 @@ table.pv td.st i.pend{
     <div class="pickme" id="pickMe" hidden>
       まず右上で担当者を選んでください。押印する名前が決まりません。
     </div>
-    <button class="iconbtn" id="btnLedger" title="記録簿（監査用）" aria-label="記録簿">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="3.5" width="16" height="17" rx="2"/>
-        <path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/>
-      </svg>
-    </button>
-    <button class="iconbtn" id="btnPrint" title="帳票を出力" aria-label="帳票を出力">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 9V4h10v5"/>
-        <rect x="4" y="9" width="16" height="7" rx="1.5"/>
-        <path d="M7 14h10v6H7z"/>
-      </svg>
-    </button>
-    <button class="iconbtn" id="btnAdmin" title="担当者の管理" aria-label="担当者の管理">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="9" cy="8" r="3.2"/>
-        <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
-        <path d="M17.5 9.5v6M14.5 12.5h6" stroke-linecap="round"/>
-      </svg>
-    </button>
+    <nav class="topnav" aria-label="画面の切り替え">
+      <button class="navcircle" id="navInput" aria-pressed="true" title="入力画面">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 20.5h16"/><path d="M14.6 4.4l4 4L8.4 18.6H4.4v-4z"/>
+        </svg></span>
+        <span class="cap">入力</span>
+      </button>
+      <button class="navcircle" id="navLedger" aria-pressed="false" title="記録簿（監査用）">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="3.5" width="16" height="17" rx="2"/>
+          <path d="M8 8h8M8 12h8M8 16h5"/>
+        </svg><span class="dot" id="navLedgerDot" hidden></span></span>
+        <span class="cap">記録簿</span>
+      </button>
+      <button class="navcircle" id="navExport" aria-pressed="false" title="帳票の出力">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 9V4h10v5"/>
+          <rect x="4" y="9" width="16" height="7" rx="1.5"/>
+          <path d="M7 14h10v6H7z"/>
+        </svg></span>
+        <span class="cap">出力</span>
+      </button>
+      <span class="navsep"></span>
+      <button class="navcircle" id="btnAdmin" title="担当者の管理">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="9" cy="8" r="3.2"/>
+          <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
+          <path d="M17.5 9.5v6M14.5 12.5h6"/>
+        </svg></span>
+        <span class="cap">名簿</span>
+      </button>
+    </nav>
   </div>
 
   <div id="demoBar" class="demo" hidden>
@@ -929,15 +1097,21 @@ table.pv td.st i.pend{
     <span class="lg-dirtycnt" id="lgDirty"></span>
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
-    <button class="btn ghost" id="lgPrint">PDFを出力</button>
-    <button class="mini" id="lgClose">閉じる</button>
+    <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
+    <button class="btn ghost" id="lgPrint" title="ドライブにPDFを保存します（1週あたり数秒）">PDFを出力</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
   <div class="lg-alerts" id="lgAlerts" hidden></div>
-  <div id="lgExport"></div>
   <div id="lgBody"><div class="skeleton"></div></div>
   <div id="lgFoot"></div>
+</section>
+
+<section class="lgview" id="viewExport" hidden>
+  <div class="lg-bar">
+    <div class="ttl"><b>帳票の出力</b><span>期間を選んでPDFにします</span></div>
+  </div>
+  <div class="card"><div class="card-bd" id="pvBody"></div></div>
 </section>
 
 <div class="overlay" id="xfOverlay" role="dialog" aria-modal="true" aria-labelledby="xfTitle">
@@ -965,13 +1139,22 @@ table.pv td.st i.pend{
   </div>
 </div>
 
-<div class="overlay" id="pvOverlay" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
-  <div class="sheet">
-    <div class="sheet-hd">
-      <h2 id="pvTitle">帳票の出力</h2>
-      <button class="mini" id="pvClose">閉じる</button>
+<!-- ============================================================
+     帳票の出力
+     期間を選び、帳票テンプレート経由でPDFにする画面。
+     ============================================================ -->
+<!-- 出力の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
+<div class="jobbar" id="jobBar" hidden role="status" aria-live="polite">
+  <div class="jb-in">
+    <div class="jb-main">
+      <div class="jb-head">
+        <b id="jobTitle">帳票の出力</b>
+        <span id="jobStep"></span>
+      </div>
+      <div class="jb-bar"><i id="jobFill"></i></div>
+      <div class="jb-time" id="jobTime"></div>
     </div>
-    <div class="sheet-bd" id="pvBody"></div>
+    <div class="jb-act" id="jobAct"></div>
   </div>
 </div>
 
@@ -1030,6 +1213,73 @@ function call(fn, args, ok, ng){
 }
 function fail(e){ toast((e && e.message) || 'サーバーとの通信に失敗しました', true); }
 
+/* ============================================================
+   画面の切り替え
+   トップバーの丸ボタンで「入力 / 記録簿 / 出力」を行き来します。
+   3つとも同時に出すと縦に長くなり、監査で見せるときにも邪魔なので、
+   選んだ画面だけを表示します。書きかけがあるときは確認を挟みます。
+   ============================================================ */
+var VIEWS = {
+  input:  { el:'main',       btn:'navInput'  },
+  ledger: { el:'ledger',     btn:'navLedger' },
+  export: { el:'viewExport', btn:'navExport' }
+};
+var VIEW = '';
+
+function showView(name){
+  if (name === VIEW) return;
+  if (!canLeaveView_(VIEW)) return;
+  setView_(name);
+}
+
+function setView_(name){
+  var prev = VIEW;
+  VIEW = name;
+  Object.keys(VIEWS).forEach(function(k){
+    document.getElementById(VIEWS[k].el).hidden = (k !== name);
+    document.getElementById(VIEWS[k].btn)
+      .setAttribute('aria-pressed', k === name ? 'true' : 'false');
+  });
+  window.scrollTo(0, 0);
+  enterView_(name, prev);
+}
+
+/** その画面を離れてよいか。書きかけや処理中のときだけ止めます */
+function canLeaveView_(name){
+  if (name === 'input' && S.dirty){
+    if (!confirm('入力中の内容が保存されていません。画面を移動しますか？')) return false;
+    S.dirty = false;
+    S.editing = false;
+    release_(S.sel);
+  }
+  if (name === 'ledger'){
+    if (LG.busy){ toast('保存中です。少しお待ちください', true); return false; }
+    if (lgDirtyCount() &&
+        !confirm('記録簿に保存していない行が ' + lgDirtyCount() + ' 件あります。\n破棄して移動しますか？')){
+      return false;
+    }
+    LG.dirty = {};
+    LG.edit = false;
+  }
+  // 出力中でも移動してかまいません。進み具合は画面下の帯に出続けます
+  return true;
+}
+
+function enterView_(name, prev){
+  if (name === 'input'){
+    // 記録簿で直した内容を取り込む。起動直後(prev なし)は boot が済ませている
+    if (prev && S.week){
+      call('getWeekState', [S.sel || null],
+        function(d){ apply(d); refreshMissing(); }, function(){});
+    }
+  } else if (name === 'ledger'){
+    lgOpen();
+  } else if (name === 'export'){
+    openPrint();
+  }
+  lgBar();
+}
+
 /* ---------- 起動 ---------- */
 function boot(){
   if (!IS_GAS) document.getElementById('demoBar').hidden = false;
@@ -1037,12 +1287,14 @@ function boot(){
     S.staff = d.staff;                       // [{id,name,active,records}]
     S.terms = d.terms || [];                 // [{id,staffId,name,from}] 管理薬剤師の任期
     S.auth = d.auth || { mode:'select' };
+    applyPaper_(d.paper);        // 用紙・向き・余白をサーバーに合わせる
+    EXPORT.secPerWeek = (d.exportRate && d.exportRate.secPerWeek) || 0;
     S.me = decideMe(d);
     document.getElementById('brandName').textContent = d.store;
     renderIdentity();
     apply(d);
     document.getElementById('boot').hidden = true;
-    document.getElementById('main').hidden = false;
+    setView_('input');
     scanMissing();
   });
 }
@@ -2064,17 +2316,12 @@ function daysSince(iso){
 /* ============================================================
    帳票の出力
    ============================================================ */
-var P = { from:'', to:'', preview:null, job:null, busy:false };
-var $pv = document.getElementById('pvOverlay');
+/* 出力画面の状態。出力ジョブそのものは JOB が持ちます
+   (記録簿から始めても出力画面から始めても同じものなので) */
+var P = { from:'', to:'', preview:null, stale:false };
 
-document.getElementById('btnPrint').addEventListener('click', openPrint);
-document.getElementById('pvClose').addEventListener('click', function(){
-  $pv.classList.remove('open');
-});
-$pv.addEventListener('click', function(e){ if (e.target === this) $pv.classList.remove('open'); });
-
+/* 表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します */
 function openPrint(){
-  $pv.classList.add('open');
   if (!P.from){
     P.from = S.week.weekStart || S.week.days[0].date;
     P.to   = S.week.days[6].date;
@@ -2106,35 +2353,61 @@ function renderPrint(){
     +   '<input type="date" id="pvFrom" value="' + P.from + '">'
     +   '<span class="tilde">〜</span>'
     +   '<input type="date" id="pvTo" value="' + P.to + '">'
+    +   '<button class="mini" id="pvShow" title="この期間で見え方を作り直します">表示</button>'
     + '</div>';
 
   var weeks = weekCount_(P.from, P.to);
-  h += '<p class="pvnote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
+  h += '<p class="pvnote" id="pvNote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
      + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
 
-  h += '<div class="pvwrap">' + printTable_(d) + '</div>';
-
-  if (P.job && P.job.state === 'running'){
-    var pct = Math.round(P.job.done / P.job.weeks.length * 100);
-    h += '<div class="progress"><div class="bar"><i style="width:' + pct + '%"></i></div>'
-       + '<div class="txt">' + P.job.done + ' / ' + P.job.weeks.length + ' 週 完了'
-       + '（この画面を開いたまま少しお待ちください）</div></div>'
-       + '<div class="actions"><button class="btn ghost" id="pvCancel">中止する</button></div>';
-  } else if (P.job && P.job.state === 'done'){
-    h += '<div class="donebox"><b>出力しました</b>'
-       + P.job.title + '.pdf（' + P.job.weeks.length + 'ページ）を'
-       + 'ドライブの「業務日報_出力」フォルダに保存しました。'
-       + '<div style="margin-top:6px"><a href="' + P.job.pdfUrl + '" target="_blank">PDFを開く</a></div>'
-       + '</div>'
-       + '<div class="actions"><button class="btn primary" id="pvGo">別の期間を出力する</button></div>';
-  } else {
-    h += '<div class="actions"><button class="btn primary" id="pvGo"'
-       + (d.hasTemplate ? '' : ' disabled') + '>この期間を出力する</button></div>';
-  }
+  h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
+     + '<p class="pvscale" id="pvScale"></p>'
+     + '<div class="actions">'
+     +   '<button class="btn primary" id="pvGo"' + (d.hasTemplate ? '' : ' disabled') + '>'
+     +     'この期間をPDFにする</button>'
+     +   '<button class="btn ghost" id="pvPaper">この週をそのまま印刷</button>'
+     + '</div>';
 
   document.getElementById('pvBody').innerHTML = h;
   wirePrint_();
+  fitPreview_();
 }
+
+/* 帳票は列幅の合計が1000pxを超えるので、画面によっては入りきりません。
+   はみ出す分だけ縮めて、1週間の全体が一目で分かるようにします。
+   縮めたときは、その倍率を下に出します(刷るのは常に原寸) */
+function fitPreview_(){
+  var wrap = document.getElementById('pvWrap');
+  var note = document.getElementById('pvScale');
+  if (!wrap) return;
+  var tbl = wrap.querySelector('table.pv');
+  if (!tbl) return;
+
+  // いったん元に戻してから測る
+  wrap.classList.remove('fit');
+  wrap.style.height = '';
+  tbl.style.transform = '';
+  if (note) note.textContent = '';
+
+  var avail = wrap.clientWidth - 20;      // .pvwrap の内側の余白ぶん
+  var w = tbl.offsetWidth;
+  if (!w || !avail || w <= avail) return; // 収まっているならそのまま
+
+  var k = avail / w;
+  tbl.style.transform = 'scale(' + k.toFixed(4) + ')';
+  wrap.style.height = Math.ceil(tbl.offsetHeight * k) + 'px';
+  wrap.classList.add('fit');
+  if (note){
+    note.textContent = '画面の幅に合わせて ' + Math.round(k * 100) + '% で表示しています。'
+      + '印刷・PDFは原寸です。';
+  }
+}
+
+window.addEventListener('resize', function(){
+  if (VIEW === 'export') fitPreview_();
+});
+
+/* 印刷と出力の実装は「出力」の節にまとめてあります(下の方) */
 
 function preset(label, key){
   return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
@@ -2144,27 +2417,59 @@ function wirePrint_(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'), function(b){
     b.addEventListener('click', function(){
       applyPreset_(b.getAttribute('data-preset'));
-      P.job = null;
+      P.stale = false;      // 開始日と最終日が一度に決まるので、そのまま作り直す
       loadPreview();
     });
   });
+  // 日付を選ぶたびに作り直すと、開始日を選んだ時点でも一度生成してしまう。
+  // ここでは値を控えるだけにして、「表示」を押されたときに作り直す。
   ['pvFrom','pvTo'].forEach(function(id){
     var el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', function(){
       P.from = document.getElementById('pvFrom').value;
       P.to   = document.getElementById('pvTo').value;
-      if (P.from && P.to && P.from > P.to){ P.to = P.from; }
-      P.job = null;
-      loadPreview();
+      if (P.from && P.to && P.from > P.to){
+        P.to = P.from;
+        document.getElementById('pvTo').value = P.to;
+      }
+      pvRangeChanged_();
     });
   });
+  var show = document.getElementById('pvShow');
+  if (show) show.addEventListener('click', function(){
+    if (!P.from || !P.to){ toast('開始日と最終日を選んでください', true); return; }
+    P.stale = false;
+    loadPreview();
+  });
+  var paper = document.getElementById('pvPaper');
+  if (paper) paper.addEventListener('click', function(){ printPaper_('export'); });
   var go = document.getElementById('pvGo');
   if (go) go.addEventListener('click', startPrint_);
-  var cx = document.getElementById('pvCancel');
-  if (cx) cx.addEventListener('click', function(){
-    call('cancelExport', [], function(){ P.job = null; loadPreview(); toast('中止しました'); });
-  });
+}
+
+/* 期間を変えたときは、週数の表示だけを更新する。
+   見え方の作り直し(サーバー往復)は「表示」を押されるまで待つ。 */
+function pvRangeChanged_(){
+  P.stale = true;
+  var ok   = !!(P.from && P.to);
+  var note = document.getElementById('pvNote');
+  var show = document.getElementById('pvShow');
+  var go   = document.getElementById('pvGo');
+
+  if (show){ show.disabled = !ok; show.classList.toggle('on', ok); }
+  if (go) go.disabled = !ok;
+  if (!note) return;
+
+  if (!ok){
+    note.textContent = '開始日と最終日を選んでください。';
+    return;
+  }
+  var weeks = weekCount_(P.from, P.to);
+  note.innerHTML = jp(P.from) + ' 〜 ' + jp(P.to) + ' ＝ ' + weeks + ' 週分 / '
+    + weeks + ' ページ。'
+    + '<b style="display:inline">［表示］を押すと、この期間の見え方を作り直します。</b>'
+    + '（出力は押さなくても、この期間で行われます）';
 }
 
 function applyPreset_(key){
@@ -2278,41 +2583,369 @@ function printTable_(d){
     + '">' + head + '<tbody>' + body + '</tbody></table>';
 }
 
-/* 出力。6分の上限があるので、終わるまで小分けに呼び続ける */
-function startPrint_(){
-  if (P.busy) return;
-  var weeks = weekCount_(P.from, P.to);
-  if (!confirm(jp(P.from) + ' 〜 ' + jp(P.to) + ' の ' + weeks + ' 週分を出力します。\nよろしいですか？')) return;
+/* ============================================================
+   出力
 
-  P.busy = true;
-  var btn = document.getElementById('pvGo');
-  if (btn){ btn.disabled = true; btn.textContent = '準備中…'; }
+   ボタンは4つありますが、中身は2通りしかありません。
 
-  call('startExport', [{ from:P.from, to:P.to, title:jobTitle_(), actor:S.me }], function(job){
-    P.job = job;
-    renderPrint();
-    pump_();
-  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+     紙に出す   … 画面に描いてある帳票をそのまま印刷する。待ち時間なし
+     PDFにする  … 帳票テンプレート経由でドライブに保存する。1週あたり数秒
+
+   どのボタンから押しても、必ずこの節を通ります。
+     記録簿の「印刷」          → printPaper_('ledger')
+     出力画面の「この週を…印刷」→ printPaper_('export')
+     記録簿の「PDFを出力」      → startExportJob_({ … })  表示中の月ぜんぶ
+     出力画面の「この期間を…」  → startExportJob_({ … })  選んだ期間
+
+   用紙・向き・余白はサーバーの CFG.PDF が唯一の出どころです。起動時に
+   受け取って印刷用のCSSにも当てるので、ブラウザ印刷とPDF出力で
+   刷り上がりが食い違いません。
+
+   PDFの進み具合は、どちらから始めても画面下に固定した帯に出ます。
+   長い期間だと数十分かかることがあるので、スクロールしても画面を
+   移動しても、残り時間が見えるようにしています。
+   ============================================================ */
+
+/* ---------- 紙の設定 ---------- */
+var PAPER = { page:'A4', landscape:true, marginIn:0.4 };
+applyPaper_();          // 読み込み前でも既定の用紙で刷れるように
+
+/** サーバーから受け取った紙の設定を、印刷用CSSの @page に反映する */
+function applyPaper_(p){
+  if (p){
+    PAPER = {
+      page: p.page || 'A4',
+      landscape: !!p.landscape,
+      marginIn: Number(p.marginIn) || 0.4
+    };
+  }
+  var css = document.getElementById('pageRule');
+  if (!css){
+    css = document.createElement('style');
+    css.id = 'pageRule';
+    (document.head || document.documentElement).appendChild(css);
+  }
+  css.textContent = '@media print{@page{size:' + PAPER.page + ' '
+    + (PAPER.landscape ? 'landscape' : 'portrait')
+    + ';margin:' + (PAPER.marginIn * 25.4).toFixed(1) + 'mm}}';
 }
 
-function pump_(){
-  call('runExportChunk', [], function(job){
-    P.job = job;
-    renderPrint();
-    if (job && job.state === 'running'){
-      setTimeout(pump_, 400);
-    } else {
-      P.busy = false;
-      if (job && job.state === 'done') toast('PDFを出力しました');
+/** 紙に入る幅(mm)。用紙の幅から左右の余白を引いたもの */
+function paperWidthMm_(){
+  var w = (String(PAPER.page).toUpperCase() === 'A3')
+    ? (PAPER.landscape ? 420 : 297)
+    : (PAPER.landscape ? 297 : 210);
+  return w - PAPER.marginIn * 25.4 * 2;
+}
+
+/* ---------- 紙に出す ---------- */
+
+/** 紙に入る幅を実測して、はみ出す分だけ縮める倍率を返す。
+ *  mm から px への換算はブラウザや設定で変わるので、実際に測ります。 */
+function printScale_(){
+  var probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;width:'
+    + paperWidthMm_().toFixed(2) + 'mm';
+  document.body.appendChild(probe);
+  var avail = probe.offsetWidth;
+  document.body.removeChild(probe);
+
+  // いま出ている画面の帳票を測る。隠れている方は幅が0になってしまうため
+  var tbl = document.querySelector(
+    VIEW === 'export' ? '#pvBody table.pv' : '#lgBody table.pv');
+  if (!tbl || !avail) return 1;
+  var w = tbl.offsetWidth;
+  if (!w || w <= avail) return 1;      // 収まるなら原寸のまま
+  return avail / w;
+}
+
+/** 画面をそのまま紙に出す。src は 'ledger' か 'export' */
+function printPaper_(src){
+  if (src === 'ledger'){
+    var d = LG.data;
+    if (!d) return;
+    if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+    if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+    if (LG.edit){ LG.edit = false; lgRender(); }   // 入力欄のまま刷らない
+  } else {
+    if (!P.preview || !P.preview.hasTemplate){
+      toast('帳票テンプレートがありません', true);
+      return;
     }
-  }, function(e){ P.busy = false; fail(e); renderPrint(); });
+  }
+  // 描き直した直後に呼ばれることがあるので、反映を待ってから
+  setTimeout(function(){ window.print(); }, 60);
 }
 
-function jobTitle_(){
-  var a = P.from.split('-'), b = P.to.split('-');
+window.addEventListener('beforeprint', function(){
+  var t = document.querySelector('#pvWrap table.pv');
+  if (t) t.style.transform = '';                 // 画面用の縮小は外す
+  document.documentElement.style.setProperty('--pscale', printScale_().toFixed(4));
+});
+
+window.addEventListener('afterprint', function(){
+  document.documentElement.style.removeProperty('--pscale');
+  if (VIEW === 'export') fitPreview_();
+});
+
+/* ---------- PDFにして残す ----------
+   1回の呼び出しで何週分もまとめて作るため、そのあいだ画面は止まって見えます。
+   週ごとに呼び分けると下準備が増えて全体は遅くなるので、作るのはまとめたまま、
+   進み具合だけを別に問い合わせてバーを動かします。
+   getExportStatus は保存済みの進捗を読むだけなので、出力は遅くなりません。
+
+   進み具合は画面下に固定した帯に出します。長い期間だと数十分かかることが
+   あるので、スクロールしても画面を移動しても、残り時間が見えるようにしています。 */
+var JOB = { data:null, busy:false, timer:null, tick:null, shell:'', at0:0 };
+
+/** 前回までの実測(1週あたり何秒)。始める前の見込みに使います */
+var EXPORT = { secPerWeek: 0 };
+
+/** 秒を「1時間20分」「3分5秒」のような読める形にする */
+function humanSec_(sec){
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + '秒';
+  var m = Math.floor(sec / 60), r = sec % 60;
+  if (m < 60) return m + '分' + (r ? r + '秒' : '');
+  var h = Math.floor(m / 60);
+  m = m % 60;
+  return h + '時間' + (m ? m + '分' : '');
+}
+
+/** 時刻を HH:MM で */
+function clock_(d){
+  return String(d.getHours()).padStart(2, '0') + ':'
+       + String(d.getMinutes()).padStart(2, '0');
+}
+
+/** 始める前の見込み。実績が無いうちは出しません */
+function estimateSec_(weeks){
+  return EXPORT.secPerWeek > 0 ? EXPORT.secPerWeek * weeks : 0;
+}
+
+/** 走っているジョブの経過と残りを見積もる */
+function jobEta_(j){
+  var total = (j.weeks && j.weeks.length) || 0;
+  var done  = j.done || 0;
+  var out = { total:total, done:done, pct: total ? Math.round(done / total * 100) : 0,
+              elapsed:0, remain:0, at:null };
+
+  // 開始時刻はサーバーの値を使い、無ければ押した時刻で代用する
+  var t0 = j.startedAt ? new Date(j.startedAt).getTime() : JOB.at0;
+  if (!t0) return out;
+  out.elapsed = (Date.now() - t0) / 1000;
+  if (out.elapsed < 0) out.elapsed = 0;
+
+  // 1週でも終わっていれば実測から、まだなら前回までの実績から見積もる
+  var per = done > 0 ? (out.elapsed / done) : EXPORT.secPerWeek;
+  if (per > 0 && total > done){
+    out.remain = per * (total - done);
+    out.at = new Date(Date.now() + out.remain * 1000);
+  }
+  return out;
+}
+
+/** o = { from, to, title, hasTemplate } */
+function startExportJob_(o){
+  if (JOB.busy){
+    toast('ほかの出力を実行中です。終わるまでお待ちください', true);
+    return;
+  }
+  if (!o.from || !o.to){ toast('開始日と最終日を選んでください', true); return; }
+  if (!o.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+
+  var weeks = weekCount_(o.from, o.to);
+  var est = estimateSec_(weeks);
+  if (!confirm(jp(o.from) + ' 〜 ' + jp(o.to) + ' の ' + weeks + ' 週分をPDFにします。\n'
+      + (est ? '前回までの実績から、およそ ' + humanSec_(est) + ' かかる見込みです。\n' : '')
+      + 'ドライブの「業務日報_出力」フォルダに保存します。\nよろしいですか？')) return;
+
+  JOB.busy = true;
+  JOB.at0 = Date.now();
+  JOB.data = {
+    state:'running', done:0, weeks:new Array(weeks), title:o.title,
+    startedAt: new Date().toISOString()
+  };
+  renderJob_();
+
+  call('startExport', [{ from:o.from, to:o.to, title:o.title, actor:S.me }], function(job){
+    JOB.data = job;
+    renderJob_();
+    pollJob_();
+    pumpJob_();
+  }, function(e){ endJob_(); JOB.data = null; renderJob_(); fail(e); });
+}
+
+/** 6分の上限があるので、終わるまで小分けに呼び続ける */
+function pumpJob_(){
+  call('runExportChunk', [], function(job){
+    JOB.data = job;
+    if (job && job.state === 'running'){
+      renderJob_();
+      setTimeout(pumpJob_, 400);
+    } else {
+      endJob_();
+      renderJob_();
+      if (job && job.state === 'done') toast('PDFを出力しました');
+      else if (job && job.state === 'error') toast(job.message || '出力できませんでした', true);
+    }
+  }, function(e){ endJob_(); renderJob_(); fail(e); });
+}
+
+function endJob_(){
+  JOB.busy = false;
+  stopPollJob_();
+  stopTick_();
+}
+
+function cancelJob_(){
+  if (!confirm('出力を中止します。ここまでの分は保存されません。よろしいですか？')) return;
+  call('cancelExport', [], function(){
+    endJob_(); JOB.data = null; renderJob_(); toast('中止しました');
+  }, function(e){ endJob_(); fail(e); });
+}
+
+function closeJob_(){ JOB.data = null; renderJob_(); }
+
+/* 作っているあいだの進み具合だけを別に問い合わせる */
+function pollJob_(){
+  stopPollJob_();
+  var tick = function(){
+    if (!JOB.busy){ stopPollJob_(); return; }
+    call('getExportStatus', [], function(j){
+      if (!JOB.busy){ stopPollJob_(); return; }
+      if (j && j.state === 'running'){ JOB.data = j; renderJob_(); }
+      JOB.timer = setTimeout(tick, 2000);
+    }, function(){ JOB.timer = setTimeout(tick, 3000); });
+  };
+  JOB.timer = setTimeout(tick, 1500);
+}
+
+function stopPollJob_(){
+  if (JOB.timer){ clearTimeout(JOB.timer); JOB.timer = null; }
+}
+
+/* サーバーへ聞くのは2秒おきでも、経過時間は毎秒動かしたい */
+function startTick_(){
+  stopTick_();
+  JOB.tick = setInterval(function(){
+    if (!JOB.data || JOB.data.state !== 'running'){ stopTick_(); return; }
+    paintJob_();
+  }, 1000);
+}
+
+function stopTick_(){
+  if (JOB.tick){ clearInterval(JOB.tick); JOB.tick = null; }
+}
+
+/** 帯の枠組み。状態が変わったときだけ作り直す(ボタンを付け直さないため) */
+function renderJob_(){
+  var bar = document.getElementById('jobBar');
+  var j = JOB.data;
+
+  if (!j){
+    bar.hidden = true;
+    document.body.classList.remove('jobbar-on');
+    JOB.shell = '';
+    stopTick_();
+    return;
+  }
+
+  bar.hidden = false;
+  document.body.classList.add('jobbar-on');
+  bar.classList.toggle('done', j.state === 'done');
+  bar.classList.toggle('err',  j.state === 'error');
+
+  if (JOB.shell !== j.state){
+    JOB.shell = j.state;
+    var act = document.getElementById('jobAct');
+    if (j.state === 'running'){
+      act.innerHTML = '<button class="btn ghost" id="jobCancel">中止する</button>';
+      document.getElementById('jobCancel').addEventListener('click', cancelJob_);
+      startTick_();
+    } else {
+      act.innerHTML = '<button class="btn ghost" id="jobClose">閉じる</button>';
+      document.getElementById('jobClose').addEventListener('click', closeJob_);
+      stopTick_();
+    }
+  }
+  paintJob_();
+}
+
+/** 帯の中身。1秒ごとにここだけ書き換える */
+function paintJob_(){
+  var j = JOB.data;
+  if (!j) return;
+  var ttl  = document.getElementById('jobTitle');
+  var step = document.getElementById('jobStep');
+  var fill = document.getElementById('jobFill');
+  var time = document.getElementById('jobTime');
+
+  if (j.state === 'done'){
+    ttl.textContent = 'PDFを出力しました';
+    step.textContent = esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）';
+    fill.style.width = '100%';
+    time.innerHTML = 'ドライブの「業務日報_出力」フォルダに保存しました。'
+      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>';
+    return;
+  }
+  if (j.state === 'error'){
+    ttl.textContent = '出力できませんでした';
+    step.textContent = '';
+    fill.style.width = '0';
+    time.textContent = j.message || '';
+    return;
+  }
+
+  var e = jobEta_(j);
+  ttl.textContent = (j.title || '帳票') + ' を作成中';
+  step.textContent = e.done + ' / ' + e.total + ' 週（' + e.pct + '%）';
+  fill.style.width = e.pct + '%';
+
+  var line = '経過 <b>' + humanSec_(e.elapsed) + '</b>';
+  if (e.remain > 0){
+    line += ' ／ 残り およそ <b>' + humanSec_(e.remain) + '</b>'
+          + '（終わる目安 ' + clock_(e.at) + '）';
+  } else if (e.done === 0){
+    line += ' ／ 残り時間を計算しています…';
+  } else {
+    line += ' ／ まもなく終わります';
+  }
+  line += '<br>この画面を閉じると出力は止まります。開いたままにしてください'
+        + '（ほかの画面へ移っても続きます）。';
+  time.innerHTML = line;
+}
+
+/** 表題。1か月に収まるなら「2026年8月分」、またぐなら日付でつなぐ */
+function jobTitle_(from, to){
+  var a = from.split('-'), b = to.split('-');
   if (a[0] === b[0] && a[1] === b[1]) return a[0] + '年' + a[1] + '月分';
   return a[0] + a[1] + a[2] + '-' + b[0] + b[1] + b[2];
 }
+
+/* ---------- 各ボタンの入口 ---------- */
+
+/** 出力画面「この期間をPDFにする」 */
+function startPrint_(){
+  startExportJob_({
+    from: P.from, to: P.to, title: jobTitle_(P.from, P.to),
+    hasTemplate: !!(P.preview && P.preview.hasTemplate)
+  });
+}
+
+/** 記録簿「PDFを出力」。表示している月ぜんぶ */
+function lgExport(){
+  var d = LG.data;
+  if (!d) return;
+  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+  startExportJob_({
+    from: d.monthStart, to: d.monthEnd, title: d.monthLabel + '分',
+    hasTemplate: d.hasTemplate
+  });
+}
+
+/** 記録簿「印刷」 */
+function lgPaper(){ printPaper_('ledger'); }
 
 
 
@@ -2330,29 +2963,18 @@ function jobTitle_(){
 var LG = { data:null, edit:false, busy:false, dirty:{}, job:null, xfDate:null };
 var $lg = document.getElementById('ledger');
 
-/* ---------- 開閉 ---------- */
+/* ---------- 読み込み ----------
+   表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します。
+   前に開いていた月を覚えておき、戻ってきたときに同じ月を出します。 */
 function lgOpen(anchor){
-  document.getElementById('main').hidden = true;
-  $lg.hidden = false;
-  LG.edit = false; LG.dirty = {}; LG.job = null;
-  window.scrollTo(0, 0);
-  lgLoad(anchor || (S.week ? S.week.today : null));
-}
-
-function lgClose(){
-  if (lgDirtyCount() &&
-      !confirm('保存していない行が ' + lgDirtyCount() + ' 件あります。破棄して閉じますか？')) return;
-  LG.dirty = {}; LG.edit = false;
-  $lg.hidden = true;
-  document.getElementById('main').hidden = false;
-  // 記録簿で直した内容を、日別の画面にも反映させる
-  call('getWeekState', [S.sel || null], function(d){ apply(d); refreshMissing(); }, function(){});
+  LG.edit = false;
+  lgLoad(anchor || LG.anchor || (S.week ? S.week.today : null));
 }
 
 function lgLoad(anchor){
   document.getElementById('lgBody').innerHTML = '<div class="skeleton"></div>';
   call('getLedger', [anchor || null], function(d){
-    LG.data = d; LG.dirty = {};
+    LG.data = d; LG.dirty = {}; LG.anchor = d.monthStart;
     lgRender();
   }, fail);
 }
@@ -2618,7 +3240,8 @@ function lgTable_(week){
 
     var note = ed
       ? '<td class="nt ed" colspan="' + span + '">'
-        + '<button class="notebtn" data-act="xfer" data-date="' + r.date + '">'
+        + '<button class="notebtn' + (lgNoteOf(v) ? '' : ' empty') + '"'
+        + ' data-act="xfer" data-date="' + r.date + '">'
         + (lgNoteOf(v) ? esc(lgNoteOf(v)) : '＋ 譲渡・譲受を記入') + '</button></td>'
       : '<td class="nt" colspan="' + span + '">' + esc(lgNoteOf(v)) + '</td>';
 
@@ -2664,6 +3287,8 @@ function lgStat_(k, v, cls){
 function lgBar(){
   var n = lgDirtyCount();
   document.getElementById('lgDirty').textContent = n ? ('未保存 ' + n + ' 行') : '';
+  // 別の画面にいても、書きかけがあることが分かるようにする
+  document.getElementById('navLedgerDot').hidden = !n;
 }
 
 function lgRender(){
@@ -2722,76 +3347,22 @@ function lgRender(){
 
   document.getElementById('lgFoot').innerHTML =
       '<div class="lg-note"><b>この画面について</b>'
-    + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。'
-    + '「PDFを出力」を押すと、ドライブの「業務日報_出力」フォルダに'
-    + d.monthLabel + '分（' + d.weeks.length + 'ページ）が保存されます。<br>'
+    + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。<br>'
+    + '<b style="display:inline">印刷</b>… この画面をそのまま紙に出します。'
+    + 'サーバーを介さないのですぐ出ます（' + d.weeks.length + 'ページ）。<br>'
+    + '<b style="display:inline">PDFを出力</b>… ドライブの「業務日報_出力」フォルダに'
+    + d.monthLabel + '分を保存します。控えを残すときはこちら（1週あたり数秒）。<br>'
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
-  lgRenderExport();
   lgBar();
 }
 
-/* ---------- PDF出力(既存の帳票出力をそのまま呼ぶ) ---------- */
-function lgExport(){
-  var d = LG.data;
-  if (!d || LG.busy) return;
-  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
-  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-  if (!confirm(d.monthLabel + '分（' + d.weeks.length + 'ページ）のPDFを出力します。\nよろしいですか？')) return;
-
-  LG.busy = true;
-  LG.job = { state:'running', done:0, weeks:d.weeks.map(function(w){ return w.start; }), title:'' };
-  lgRenderExport();
-
-  call('startExport', [{
-    from: d.monthStart, to: d.monthEnd,
-    title: d.monthLabel + '分', actor: S.me
-  }], function(job){
-    LG.job = job;
-    lgRenderExport();
-    lgPump();
-  }, function(e){ LG.busy = false; LG.job = null; lgRenderExport(); fail(e); });
-}
-
-function lgPump(){
-  call('runExportChunk', [], function(job){
-    LG.job = job;
-    lgRenderExport();
-    if (job && job.state === 'running'){
-      setTimeout(lgPump, 400);
-    } else {
-      LG.busy = false;
-      if (job && job.state === 'done') toast('PDFを出力しました');
-    }
-  }, function(e){ LG.busy = false; fail(e); lgRenderExport(); });
-}
-
-function lgRenderExport(){
-  var box = document.getElementById('lgExport');
-  var j = LG.job;
-  if (!j){ box.innerHTML = ''; return; }
-
-  if (j.state === 'running'){
-    var total = (j.weeks && j.weeks.length) || 1;
-    var pct = Math.round(j.done / total * 100);
-    box.innerHTML = '<div class="progress"><div class="bar"><i style="width:' + pct + '%"></i></div>'
-      + '<div class="txt">' + j.done + ' / ' + total + ' 週 完了'
-      + '（この画面を開いたまま少しお待ちください）</div></div>';
-  } else if (j.state === 'done'){
-    box.innerHTML = '<div class="donebox"><b>PDFを出力しました</b>'
-      + esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）を'
-      + 'ドライブの「業務日報_出力」フォルダに保存しました。'
-      + '<div style="margin-top:6px"><a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a></div>'
-      + '</div>';
-  } else {
-    box.innerHTML = '';
-  }
-}
-
 /* ---------- 配線 ---------- */
-document.getElementById('btnLedger').addEventListener('click', function(){ lgOpen(); });
-document.getElementById('lgClose').addEventListener('click', lgClose);
+document.getElementById('navInput').addEventListener('click', function(){ showView('input'); });
+document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
+document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
+document.getElementById('lgPaper').addEventListener('click', lgPaper);
 document.getElementById('lgPrint').addEventListener('click', lgExport);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
@@ -2900,6 +3471,7 @@ var MOCK = (function(){
   ];
 
   var store = {};
+  var job = null;
 
   function names(){ return staff.filter(function(s){ return s.active; }); }
   function chiefOn(date){
@@ -3017,6 +3589,8 @@ var MOCK = (function(){
       store:'くるむ薬局 札幌店',
       today: todayIso,
       weekStart: days[0].date,
+      paper: { page:'A4', landscape:true, marginIn:0.4 },
+      exportRate: { secPerWeek: 6 },
       me: null,
       staff: staffOut(),
       terms: terms.slice(),
@@ -3223,6 +3797,7 @@ var MOCK = (function(){
         a.setDate(a.getDate() + 7);
       }
       job = { from:p.from, to:p.to, title:p.title, weeks:weeks, done:0,
+              startedAt: new Date().toISOString(),
               state:'running', pdfUrl:'' };
       return job;
     },
@@ -3236,6 +3811,7 @@ var MOCK = (function(){
       return job;
     },
     cancelExport: function(){ if (job) job.state = 'canceled'; return job; },
+    getExportStatus: function(){ return job; },
 
     claimDay: function(p){
       if (!store[p.date]) store[p.date] = { state:'editing', lockedBy:p.staff };
