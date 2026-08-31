@@ -1749,6 +1749,9 @@ const PRINT = {
   RATE_KEY: 'EXPORT_SEC_PER_WEEK',   // 1週あたりの実測(次回の見込みに使う)
   OUT_FOLDER: '業務日報_出力',
   TIME_BUDGET_MS: 4.5 * 60 * 1000,   // 6分の上限に対して余裕を取る
+  // 次の1週を始めてよいか決めるときの見込み。
+  // いちばん遅かった週の何倍を見込むか。1.0だと、たまたま遅い週で越えます
+  WEEK_MARGIN: 1.5,
   DAY_ROWS: 7
 };
 
@@ -2470,13 +2473,30 @@ function runExportChunk(budgetMs) {
       base.count[k.full]  = (base.count[k.full]  || 0) + 1;
     }
 
+    // 1週にかかった時間。実行をまたいで引き継ぐので、続きの回でも効きます
+    let slowest = Number(job.weekMs) || 0;
+    const first = job.done;
+
     try {
-      while (job.done < job.weeks.length && Date.now() - t0 < budget) {
+      while (job.done < job.weeks.length) {
+        const used = Date.now() - t0;
+        if (used >= budget) break;
+
+        // 上限の手前で1週を始めると、その1週ぶん上限を飛び越えます。
+        // 2週目からは「いちばん遅かった週がもう1回入る余地」を求めます。
+        // 1回につき最低1週は進めます(でないと続きを呼んでも進みません)。
+        if (job.done > first && slowest && used + slowest * PRINT.WEEK_MARGIN > budget) break;
+
+        const w0 = Date.now();
         const w = job.weeks[job.done];
         const rows = weekRows_(w, idx, terms, xi);
         const b = sealBase_(temp, tpl, rows, seals, geo, base);
         renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
+        const took = Date.now() - w0;
+        if (took > slowest) slowest = took;
+
         job.done++;
+        job.weekMs = slowest;
         PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
       }
 
@@ -3766,6 +3786,17 @@ function sweepStuckJob_() {
   PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
   console.warn(job.message);
   audit_('止まった出力を片づけた', (job.title || '') + '：' + job.message, '夜間自動');
+
+  // 黙って片づけると、同じところで毎回止まっていても誰も気づきません
+  notify_('途中で止まっていた出力を片づけました', [
+    (job.title || '（名前なし）') + ' が ' + Math.floor(hours) + ' 時間 動いていませんでした。',
+    '  進み具合: ' + (job.done || 0) + ' / ' + ((job.weeks && job.weeks.length) || '?') + ' 週',
+    (job.weekMs ? '  1週あたり: ' + (job.weekMs / 1000).toFixed(1) + ' 秒' : ''),
+    '',
+    'GASの6分の上限で打ち切られた可能性があります。',
+    '同じことが続くようなら、benchmarkExport で1週あたりの時間を測ってください。',
+    '1週が数分かかるなら、この仕組みでは確定しきれません。'
+  ].filter(function (x) { return x; }));
   return true;
 }
 
@@ -3871,7 +3902,8 @@ function nightlyStep_() {
       job.month + ' の業務日報を、夜間の自動処理で確定しました。',
       '',
       '  版      : 第' + job.version + '版',
-      '  ページ  : ' + job.weeks.length + ' 週ぶん',
+      '  ページ  : ' + job.weeks.length + ' 週ぶん'
+        + (job.weekMs ? '（1週あたり ' + (job.weekMs / 1000).toFixed(1) + ' 秒）' : ''),
       '  置き場所: 業務日報_出力／' + job.month.slice(0, 4),
       '  PDF     : ' + job.pdfUrl,
       '',
