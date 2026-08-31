@@ -50,8 +50,8 @@
  *      確定まで試すと、確定台帳とドライブにテストの版が残ります。
  *
  *    1. seedWorstCaseMonth()   … データを作る
- *    2. benchmarkWorstCase()   … 1週あたり何秒かかるかを測る
- *    3. freezeWorstCase()      … 実際に6週ぶん確定してみる
+ *    2. benchmarkWorstCase()   … 1週あたりの見込みを出す(多め・当たりを付ける用)
+ *    3. freezeWorstCase()      … 実際に6週ぶん確定する(これが本当の値)
  *    4. clearWorstCaseMonth()  … 片づける
  * ============================================================
  */
@@ -587,6 +587,12 @@ function benchmarkWorstCase() {
   console.log('   1回の実行で ' + perExec + ' 週ずつ、' + times + ' 回に分かれる見込み');
   console.log('   1回あたり およそ ' + (setup + per * Math.min(perExec, weeks.length)).toFixed(0)
     + ' 秒');
+
+  console.log('');
+  console.log('   ※ この見込みは多めに出ます。押印1コマの時間を下ごしらえから');
+  console.log('     割り出していますが、そこにはシートの複製ぶんも混ざるためです。');
+  console.log('     実際の値は freezeWorstCase() で測ってください');
+  console.log('     （実測では、この見込みより4割ほど速く終わりました）');
 
   console.log('');
   if (per > 150) {
