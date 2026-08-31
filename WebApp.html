@@ -159,7 +159,7 @@ button,input,select{font:inherit;color:inherit}
 .cols{display:grid;gap:16px}
 @media (min-width:880px){
   .cols{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);align-items:start}
-  .col-right{position:sticky;top:76px}
+  .col-right{position:sticky;top:88px}
 }
 
 /* ============================================================
@@ -401,6 +401,46 @@ button,input,select{font:inherit;color:inherit}
   color:inherit;text-decoration:underline;cursor:pointer}
 
 /* ============================================================
+   画面の切り替え(トップバーの丸ボタン)
+   入力 / 記録簿 / 出力 を行き来する。同時に出すと縦に長くなるので、
+   選んだ画面だけを表示する。名簿だけは設定なのでモーダルのまま。
+   ============================================================ */
+.topnav{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+.topnav .navsep{width:1px;height:26px;background:var(--line);margin:0 1px;align-self:center}
+
+.navcircle{
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:0;padding:0;cursor:pointer;flex:0 0 auto;
+}
+.navcircle .ring{
+  width:38px;height:38px;border-radius:50%;
+  border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);
+  display:grid;place-items:center;
+  transition:background .12s ease, border-color .12s ease, transform .08s ease;
+}
+.navcircle .ring svg{
+  width:19px;height:19px;stroke:var(--ink-2);fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+.navcircle .cap{font-size:9.5px;color:var(--muted);letter-spacing:.04em;line-height:1}
+.navcircle:hover .ring{border-color:var(--line-strong)}
+.navcircle:active .ring{transform:translateY(1px)}
+/* 選択中。名簿ボタンは aria-pressed を持たないので光らない */
+.navcircle[aria-pressed="true"] .ring{background:var(--accent);border-color:var(--accent)}
+.navcircle[aria-pressed="true"] .ring svg{stroke:var(--accent-ink)}
+.navcircle[aria-pressed="true"] .cap{color:var(--accent);font-weight:700}
+/* 記録簿に未保存があるときの目印 */
+.navcircle .dot{
+  position:absolute;top:-1px;right:-1px;width:9px;height:9px;border-radius:50%;
+  background:var(--warn);border:2px solid var(--ground);
+}
+.navcircle .ring{position:relative}
+@media (max-width:380px){
+  .navcircle .ring{width:34px;height:34px}
+  .navcircle .cap{font-size:9px}
+}
+
+/* ============================================================
    担当者の管理(モーダル)
    ============================================================ */
 .iconbtn{
@@ -543,9 +583,7 @@ button,input,select{font:inherit;color:inherit}
 .formrow select:focus,.formrow input:focus{outline:none;border-color:var(--accent)}
 .formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
 
-/* ---- 帳票の出力 ---- */
-/* 帳票は横に広いので、この画面だけシートを広く取る */
-#pvOverlay .sheet{max-width:960px}
+/* ---- 帳票の出力(独立した画面) ---- */
 .presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .range input[type="date"]{
@@ -767,26 +805,38 @@ table.pv td.st i.pend{
     <div class="pickme" id="pickMe" hidden>
       まず右上で担当者を選んでください。押印する名前が決まりません。
     </div>
-    <button class="iconbtn" id="btnLedger" title="記録簿（監査用）" aria-label="記録簿">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <rect x="4" y="3.5" width="16" height="17" rx="2"/>
-        <path d="M8 8h8M8 12h8M8 16h5" stroke-linecap="round"/>
-      </svg>
-    </button>
-    <button class="iconbtn" id="btnPrint" title="帳票を出力" aria-label="帳票を出力">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M7 9V4h10v5"/>
-        <rect x="4" y="9" width="16" height="7" rx="1.5"/>
-        <path d="M7 14h10v6H7z"/>
-      </svg>
-    </button>
-    <button class="iconbtn" id="btnAdmin" title="担当者の管理" aria-label="担当者の管理">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <circle cx="9" cy="8" r="3.2"/>
-        <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
-        <path d="M17.5 9.5v6M14.5 12.5h6" stroke-linecap="round"/>
-      </svg>
-    </button>
+    <nav class="topnav" aria-label="画面の切り替え">
+      <button class="navcircle" id="navInput" aria-pressed="true" title="入力画面">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 20.5h16"/><path d="M14.6 4.4l4 4L8.4 18.6H4.4v-4z"/>
+        </svg></span>
+        <span class="cap">入力</span>
+      </button>
+      <button class="navcircle" id="navLedger" aria-pressed="false" title="記録簿（監査用）">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="3.5" width="16" height="17" rx="2"/>
+          <path d="M8 8h8M8 12h8M8 16h5"/>
+        </svg><span class="dot" id="navLedgerDot" hidden></span></span>
+        <span class="cap">記録簿</span>
+      </button>
+      <button class="navcircle" id="navExport" aria-pressed="false" title="帳票の出力">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 9V4h10v5"/>
+          <rect x="4" y="9" width="16" height="7" rx="1.5"/>
+          <path d="M7 14h10v6H7z"/>
+        </svg></span>
+        <span class="cap">出力</span>
+      </button>
+      <span class="navsep"></span>
+      <button class="navcircle" id="btnAdmin" title="担当者の管理">
+        <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="9" cy="8" r="3.2"/>
+          <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
+          <path d="M17.5 9.5v6M14.5 12.5h6"/>
+        </svg></span>
+        <span class="cap">名簿</span>
+      </button>
+    </nav>
   </div>
 
   <div id="demoBar" class="demo" hidden>
@@ -930,7 +980,6 @@ table.pv td.st i.pend{
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
     <button class="btn ghost" id="lgPrint">PDFを出力</button>
-    <button class="mini" id="lgClose">閉じる</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
@@ -938,6 +987,13 @@ table.pv td.st i.pend{
   <div id="lgExport"></div>
   <div id="lgBody"><div class="skeleton"></div></div>
   <div id="lgFoot"></div>
+</section>
+
+<section class="lgview" id="viewExport" hidden>
+  <div class="lg-bar">
+    <div class="ttl"><b>帳票の出力</b><span>期間を選んでPDFにします</span></div>
+  </div>
+  <div class="card"><div class="card-bd" id="pvBody"></div></div>
 </section>
 
 <div class="overlay" id="xfOverlay" role="dialog" aria-modal="true" aria-labelledby="xfTitle">
@@ -965,16 +1021,10 @@ table.pv td.st i.pend{
   </div>
 </div>
 
-<div class="overlay" id="pvOverlay" role="dialog" aria-modal="true" aria-labelledby="pvTitle">
-  <div class="sheet">
-    <div class="sheet-hd">
-      <h2 id="pvTitle">帳票の出力</h2>
-      <button class="mini" id="pvClose">閉じる</button>
-    </div>
-    <div class="sheet-bd" id="pvBody"></div>
-  </div>
-</div>
-
+<!-- ============================================================
+     帳票の出力
+     期間を選び、帳票テンプレート経由でPDFにする画面。
+     ============================================================ -->
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -1030,6 +1080,76 @@ function call(fn, args, ok, ng){
 }
 function fail(e){ toast((e && e.message) || 'サーバーとの通信に失敗しました', true); }
 
+/* ============================================================
+   画面の切り替え
+   トップバーの丸ボタンで「入力 / 記録簿 / 出力」を行き来します。
+   3つとも同時に出すと縦に長くなり、監査で見せるときにも邪魔なので、
+   選んだ画面だけを表示します。書きかけがあるときは確認を挟みます。
+   ============================================================ */
+var VIEWS = {
+  input:  { el:'main',       btn:'navInput'  },
+  ledger: { el:'ledger',     btn:'navLedger' },
+  export: { el:'viewExport', btn:'navExport' }
+};
+var VIEW = '';
+
+function showView(name){
+  if (name === VIEW) return;
+  if (!canLeaveView_(VIEW)) return;
+  setView_(name);
+}
+
+function setView_(name){
+  var prev = VIEW;
+  VIEW = name;
+  Object.keys(VIEWS).forEach(function(k){
+    document.getElementById(VIEWS[k].el).hidden = (k !== name);
+    document.getElementById(VIEWS[k].btn)
+      .setAttribute('aria-pressed', k === name ? 'true' : 'false');
+  });
+  window.scrollTo(0, 0);
+  enterView_(name, prev);
+}
+
+/** その画面を離れてよいか。書きかけや処理中のときだけ止めます */
+function canLeaveView_(name){
+  if (name === 'input' && S.dirty){
+    if (!confirm('入力中の内容が保存されていません。画面を移動しますか？')) return false;
+    S.dirty = false;
+    S.editing = false;
+    release_(S.sel);
+  }
+  if (name === 'ledger'){
+    if (LG.busy){ toast('保存中です。少しお待ちください', true); return false; }
+    if (lgDirtyCount() &&
+        !confirm('記録簿に保存していない行が ' + lgDirtyCount() + ' 件あります。\n破棄して移動しますか？')){
+      return false;
+    }
+    LG.dirty = {};
+    LG.edit = false;
+  }
+  if (name === 'export' && P.busy){
+    toast('PDFの出力中です。終わるまでお待ちください', true);
+    return false;
+  }
+  return true;
+}
+
+function enterView_(name, prev){
+  if (name === 'input'){
+    // 記録簿で直した内容を取り込む。起動直後(prev なし)は boot が済ませている
+    if (prev && S.week){
+      call('getWeekState', [S.sel || null],
+        function(d){ apply(d); refreshMissing(); }, function(){});
+    }
+  } else if (name === 'ledger'){
+    lgOpen();
+  } else if (name === 'export'){
+    openPrint();
+  }
+  lgBar();
+}
+
 /* ---------- 起動 ---------- */
 function boot(){
   if (!IS_GAS) document.getElementById('demoBar').hidden = false;
@@ -1042,7 +1162,7 @@ function boot(){
     renderIdentity();
     apply(d);
     document.getElementById('boot').hidden = true;
-    document.getElementById('main').hidden = false;
+    setView_('input');
     scanMissing();
   });
 }
@@ -2065,16 +2185,9 @@ function daysSince(iso){
    帳票の出力
    ============================================================ */
 var P = { from:'', to:'', preview:null, job:null, busy:false };
-var $pv = document.getElementById('pvOverlay');
 
-document.getElementById('btnPrint').addEventListener('click', openPrint);
-document.getElementById('pvClose').addEventListener('click', function(){
-  $pv.classList.remove('open');
-});
-$pv.addEventListener('click', function(e){ if (e.target === this) $pv.classList.remove('open'); });
-
+/* 表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します */
 function openPrint(){
-  $pv.classList.add('open');
   if (!P.from){
     P.from = S.week.weekStart || S.week.days[0].date;
     P.to   = S.week.days[6].date;
@@ -2330,29 +2443,18 @@ function jobTitle_(){
 var LG = { data:null, edit:false, busy:false, dirty:{}, job:null, xfDate:null };
 var $lg = document.getElementById('ledger');
 
-/* ---------- 開閉 ---------- */
+/* ---------- 読み込み ----------
+   表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します。
+   前に開いていた月を覚えておき、戻ってきたときに同じ月を出します。 */
 function lgOpen(anchor){
-  document.getElementById('main').hidden = true;
-  $lg.hidden = false;
-  LG.edit = false; LG.dirty = {}; LG.job = null;
-  window.scrollTo(0, 0);
-  lgLoad(anchor || (S.week ? S.week.today : null));
-}
-
-function lgClose(){
-  if (lgDirtyCount() &&
-      !confirm('保存していない行が ' + lgDirtyCount() + ' 件あります。破棄して閉じますか？')) return;
-  LG.dirty = {}; LG.edit = false;
-  $lg.hidden = true;
-  document.getElementById('main').hidden = false;
-  // 記録簿で直した内容を、日別の画面にも反映させる
-  call('getWeekState', [S.sel || null], function(d){ apply(d); refreshMissing(); }, function(){});
+  LG.edit = false; LG.job = null;
+  lgLoad(anchor || LG.anchor || (S.week ? S.week.today : null));
 }
 
 function lgLoad(anchor){
   document.getElementById('lgBody').innerHTML = '<div class="skeleton"></div>';
   call('getLedger', [anchor || null], function(d){
-    LG.data = d; LG.dirty = {};
+    LG.data = d; LG.dirty = {}; LG.anchor = d.monthStart;
     lgRender();
   }, fail);
 }
@@ -2664,6 +2766,8 @@ function lgStat_(k, v, cls){
 function lgBar(){
   var n = lgDirtyCount();
   document.getElementById('lgDirty').textContent = n ? ('未保存 ' + n + ' 行') : '';
+  // 別の画面にいても、書きかけがあることが分かるようにする
+  document.getElementById('navLedgerDot').hidden = !n;
 }
 
 function lgRender(){
@@ -2790,8 +2894,9 @@ function lgRenderExport(){
 }
 
 /* ---------- 配線 ---------- */
-document.getElementById('btnLedger').addEventListener('click', function(){ lgOpen(); });
-document.getElementById('lgClose').addEventListener('click', lgClose);
+document.getElementById('navInput').addEventListener('click', function(){ showView('input'); });
+document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
+document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
 document.getElementById('lgPrint').addEventListener('click', lgExport);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
