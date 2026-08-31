@@ -6,15 +6,45 @@
  *  貼り付ける場所: スプレッドシート → 拡張機能 → Apps Script
  *  もう1つ、HTMLファイル「WebApp」も必要です。
  *
- *  貼り終わったら、関数 setup を1回だけ実行してください。
+ *  ------------------------------------------------------------
+ *  貼り替えたら updateDatabase を1回実行してください
+ *  ------------------------------------------------------------
+ *  シートの作成・列の追加・書式・古いデータの移行を、正しい順番で
+ *  まとめて通します。何度実行しても同じ結果になります。
+ *  そのあとデプロイし直すと、画面にも反映されます。
  *
- *  中身の並び:
- *    1. 設定          … ここだけ書き換える
- *    2. シートの用意
- *    3. 担当者・管理薬剤師・印影・変更履歴
- *    4. 日報の読み書き
- *    5. 画面から呼ばれる入口
- *    6. 週次帳票の出力
+ *  いま貼ってあるのがどの版かは、version() で確かめられます。
+ *
+ *  ------------------------------------------------------------
+ *  手で実行する関数（エディタの関数一覧から選んで実行）
+ *  ------------------------------------------------------------
+ *    version()               いまの版と、シートの状態を出す
+ *    setup()                 いちばん最初に1回だけ
+ *    updateDatabase()        貼り替えたあとに1回。★ふだんはこれだけ
+ *    dropLegacyXferColumns() 移行後に残る日報DBの古い8列を落とす
+ *    buildTemplate()         帳票テンプレートのシートを作る
+ *    checkTemplate()         テンプレートの形を確かめる
+ *    dumpTemplateLayout()    テンプレートの実寸を書き出す
+ *    checkSheets()           シートの列がそろっているかを確かめる
+ *    checkPrintFit()         帳票が紙に収まるかを確かめる
+ *    benchmarkExport()       出力のどこに時間がかかっているかを測る
+ *    freezeLastMonth()       前月を確定する
+ *    verifyFixes()           確定PDFが確定時のままかを確かめる
+ *    sweepStaleLocks()       期限切れの編集ロックを掃除する
+ *
+ *  ------------------------------------------------------------
+ *  中身の並び
+ *  ------------------------------------------------------------
+ *     1. 設定                    … ここだけ書き換える
+ *     2. シートの用意と共通アクセス
+ *     3. 担当者・管理薬剤師・印影・変更履歴
+ *     4. 日報の読み書き
+ *     5. 画面から呼ばれる入口
+ *     6. 週次帳票の出力
+ *     7. 記録簿ビュー(監査用)
+ *     8. 記録簿の入口
+ *     9. 月次の確定(PDFに焼いて残す)
+ *    10. 証跡(ハッシュ)と、まとめて渡すZIP
  * ============================================================
  */
 
@@ -35,6 +65,10 @@
    ############################################################ */
 
 const CFG = {
+
+  /** この Code.gs の版。貼り替えたときに version() で確かめられます。
+   *  スプレッドシート側に貼った版が古いと、新しい関数が見つかりません */
+  VERSION: '2026-08-31',
 
   /** 店舗。多店舗化したときはコードで日報DBを分けます */
   STORE_CODE: 'SPK',
@@ -99,13 +133,14 @@ const CFG = {
       DATE:   1,           // A 日付・曜日・営業時間(2行ぶち抜き)
       RX:     2,           // B 処方箋枚数(単位「枚」は隣のC列に印字済み)
       INQ:    4,           // D 疑義照会件数(単位「件」はE列)
+      MGMT:   6,           // F 管理に関する事項(上段。自由記述)
       ROOM_T: 7,           // G 調剤室 温度
       ROOM_H: 8,           // H 調剤室 湿度
       COLD_T: 9,           // I 冷所 温度
       COLD_H: 10,          // J 冷所 湿度
       STAFF:  11,          // K 担当者印
       ADMIN:  12,          // L 管理者印
-      NOTE:   2            // 下段 B(B〜Lが結合されている)の左上
+      NOTE:   2            // 下段 B(B〜Lが結合されている)の左上。譲渡・譲受記録
     },
 
     /** 単位は表示形式で付けます。値は数値のまま入るので集計にも使えます */
@@ -141,8 +176,11 @@ const CFG = {
     /** 未記入のときに温湿度セルへ置いておく下地 */
     PLACEHOLDER: { TEMP: '℃　/', HUMID: '%' },
 
-    /** 列幅(A〜L) */
-    WIDTH: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+    /** 列幅(A〜L)。合計 1031px。
+     *  A4横・余白0.4インチの印刷可能幅(1045.7px)に原寸で収まる値です。
+     *  実際のシートを測って決めました(dumpTemplateLayout の出力)。
+     *  ここを変えたら checkPrintFit で収まるかを確かめてください。 */
+    WIDTH: [104, 50, 50, 50, 50, 327, 58, 46, 54, 46, 98, 98],
 
     /** 行の高さ */
     ROW_H: { HEAD1: 42, HEAD2: 42, UPPER: 42, LOWER: 42 },
@@ -154,10 +192,17 @@ const CFG = {
 
   /** PDFにするときの紙の設定。
    *
-   *  MARGIN_IN を広げると、帳票を縮める割合が大きくなります。
-   *  逆に狭めて帳票が原寸で収まるようになると、縮小せずに出力するので
-   *  外枠と紙の端のあいだに余裕ができ、罫線が欠けにくくなります。
-   *  （現在の帳票は 1071px ＝ 283.4mm。余白 0.2 インチなら原寸で収まります）
+   *  帳票が原寸で収まるなら、縮小せずに出力します。縮小すると帳票の幅が
+   *  印刷できる幅とぴったり同じになり、外枠が切り取り線の真上に来て
+   *  四隅が欠けます。収まっていればその心配がありません。
+   *
+   *  いまの帳票は 1031px ＝ 272.8mm。この余白(0.4インチ)なら
+   *  印刷できる幅は 1045.7px ＝ 276.7mm なので、原寸で収まっています。
+   *  MARGIN_IN を広げるか、テンプレートの列幅を広げると収まらなくなります。
+   *
+   *  なお MARGIN_IN はPDFの余白であって、プリンタが刷れる範囲ではありません。
+   *  たいていのプリンタは紙の端から4〜5mmを刷れないので、ここを詰めすぎると
+   *  PDFとしては収まっていてもプリンタ側で切れます。
    *
    *  EDGE_GAP_PX … 原寸で出すかどうかの判定に使う余裕。罫線の太さぶん。 */
   PDF: {
@@ -179,7 +224,9 @@ const SH = {
   DAILY: '日報DB',
   STAFF: '担当者マスタ',
   TERM:  '管理薬剤師任期',
-  LOG:   '変更履歴'
+  LOG:   '変更履歴',
+  FIX:   '確定台帳',
+  XFER:  '譲渡記録'
 };
 
 /** 列定義。ここを変えたら setup() を再実行してください */
@@ -187,14 +234,33 @@ const COLS = {
   DAILY: ['店舗コード', '日付',
           '処方箋枚数', '疑義照会件数',
           '調剤室温度', '調剤室湿度', '冷所温度', '冷所湿度',
-          // 帳票の「管理に関する事項」欄(医薬品の譲渡・譲受記録)
-          '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
-          '包装形態', '譲渡数', 'Lot', '使用期限',
+          // 帳票 上段F列。自由記述。1日1つ
+          '管理に関する事項',
           '担当者', '入力日時', '管理者', '承認日時', '状態', '編集者', '編集開始'],
   STAFF: ['ID', '氏名', 'メール', '在籍', '印影ファイルID', '登録日時'],
   TERM:  ['ID', '担当者ID', '氏名', '就任日'],
-  LOG:   ['日時', '操作', '内容', '操作者']
+  LOG:   ['日時', '操作', '内容', '操作者'],
+  // 月次を確定してPDFに焼いた記録。1行 = 1つの版
+  FIX:   ['ID', '対象月', '版', '確定日時', '確定者',
+          'ファイル名', 'ファイルID', 'リンク',
+          // 証跡。ハッシュ = PDFそのもの、連鎖 = 1つ前の連鎖とこの行をまとめたもの
+          'ハッシュ', '連鎖', '状態', '備考'],
+  // 医薬品の譲渡・譲受。1日に何件でも入るので、日報とは別の行で持ちます
+  XFER:  ['ID', '店舗コード', '日付', '連番',
+          '譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
+          '包装形態', '譲渡数', 'Lot', '使用期限', '登録日時', '登録者']
 };
+
+/**
+ * 昔の形。日報DBの列で譲渡記録を持っていたころの8列です。
+ *
+ * 新しく作るブックには足しません（COLS.DAILY に入れると、
+ * 落としても ensureColumns_ が作り直してしまうため）。
+ * 古いブックには残っているので、移行が済むまでは読み取りの控えとして使い、
+ * updateDatabase で移したあとは dropLegacyXferColumns で落とせます。
+ */
+const LEGACY_XFER_COLS = ['譲渡区分', '譲渡先名', '販売メーカー名称', '医薬品名称',
+                          '包装形態', '譲渡数', 'Lot', '使用期限'];
 
 const PROP = PropertiesService.getScriptProperties();
 
@@ -208,18 +274,24 @@ function setup() {
   ensureSheet_(SH.STAFF, COLS.STAFF);
   ensureSheet_(SH.TERM,  COLS.TERM);
   ensureSheet_(SH.LOG,   COLS.LOG);
+  ensureSheet_(SH.FIX,   COLS.FIX);
+  ensureSheet_(SH.XFER,  COLS.XFER);
 
   // 日付と就任日は文字列で持つ(タイムゾーンのずれで1日前後するのを避けるため)
   formatTextColumn_(SH.DAILY, '日付');
   formatTextColumn_(SH.TERM,  '就任日');
+  formatTextColumn_(SH.XFER,  '日付');
 
   sealFolder_();   // 印影フォルダを作っておく
 
   Logger.log('====================================================');
-  Logger.log('シートを用意しました: ' + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG].join(' / '));
+  Logger.log('シートを用意しました: '
+    + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG, SH.FIX, SH.XFER].join(' / '));
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
   Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
+  Logger.log('Code.gs を新しくしたときは updateDatabase を1回実行してください。');
+  Logger.log('いま貼ってある版は version() で確かめられます（' + CFG.VERSION + '）。');
   Logger.log('');
   Logger.log('次に「デプロイ > 新しいデプロイ > 種類:ウェブアプリ」を実行してください。');
   Logger.log('  次のユーザーとして実行 : ' +
@@ -269,6 +341,8 @@ SHEET_COLS[SH.DAILY] = COLS.DAILY;
 SHEET_COLS[SH.STAFF] = COLS.STAFF;
 SHEET_COLS[SH.TERM]  = COLS.TERM;
 SHEET_COLS[SH.LOG]   = COLS.LOG;
+SHEET_COLS[SH.FIX]   = COLS.FIX;
+SHEET_COLS[SH.XFER]  = COLS.XFER;
 
 /** この実行で確認済みのシート */
 const SCHEMA_CHECKED = {};
@@ -466,6 +540,7 @@ function staffList_() {
       id: String(r['ID']),
       name: String(r['氏名']),
       email: String(r['メール'] || ''),
+      // 在籍のセルは true/false で持つ。'退職' は以前の書き方で、古いシート用に残してある
       active: r['在籍'] !== false && String(r['在籍']) !== 'FALSE' && String(r['在籍']) !== '退職',
       sealFileId: String(r['印影ファイルID'] || ''),
       records: counts[String(r['氏名'])] || 0,
@@ -567,7 +642,7 @@ function updateStaff_(p) {
   writeRow_(t, row._row, patch);
 
   if (p.active !== undefined) {
-    audit_(p.active ? '担当者を復帰' : '担当者を退職', name, p.actor);
+    audit_(p.active ? '担当者を在籍に戻す' : '担当者を在籍から外す', name, p.actor);
   }
   return masterPayload_();
 }
@@ -579,10 +654,10 @@ function removeStaff_(p) {
 
   const name = String(row['氏名']);
   if ((dailyCountsByStaff_()[name] || 0) > 0) {
-    throw new Error('日報に記録が残っているため削除できません。退職にしてください');
+    throw new Error('日報に記録が残っているため削除できません。在籍から外してください');
   }
   if (termList_().some(function (x) { return x.staffId === String(p.id); })) {
-    throw new Error('管理薬剤師の履歴が残っているため削除できません。退職にしてください');
+    throw new Error('管理薬剤師の履歴が残っているため削除できません。在籍から外してください');
   }
 
   removeSealFile_(String(row['印影ファイルID'] || ''));
@@ -760,7 +835,13 @@ function audit_(action, detail, actor) {
    4. 日報の読み書き
    ############################################################ */
 
-/** 帳票の「管理に関する事項」欄。画面のキーとシートの列を1対1で結びます */
+/**
+ * 帳票 下段の「譲渡・譲受記録」。画面のキーと「譲渡記録」シートの列を1対1で結びます。
+ *
+ * ★ 帳票 上段F列の「管理に関する事項」とは別のものです。
+ *    管理に関する事項 … その日の特記事項。自由記述。1日1つ
+ *    譲渡・譲受記録   … 医薬品を渡した／受けた記録。1日に何件でも
+ */
 const XFER_MAP = [
   { key: 'xKind',    col: '譲渡区分' },
   { key: 'xPartner', col: '譲渡先名' },
@@ -783,6 +864,85 @@ function dailyIndex_() {
   return { t: t, map: map };
 }
 
+/* ------------------------------------------------------------
+ *  譲渡・譲受記録
+ *
+ *  1日に何件でも入るので、日報とは別の行で持ちます。
+ *  日付ごとにまとめて読み、書くときはその日のぶんを入れ替えます。
+ * ---------------------------------------------------------- */
+
+/** 日付 → その日の譲渡記録(連番順) */
+function xferIndex_() {
+  const t = table_(SH.XFER);
+  const map = {};
+  t.rows.forEach(function (r) {
+    if (String(r['店舗コード']) !== CFG.STORE_CODE) return;
+    const d = fmt_(r['日付']);
+    if (!d) return;
+    (map[d] = map[d] || []).push(r);
+  });
+  Object.keys(map).forEach(function (d) {
+    map[d].sort(function (a, b) { return (Number(a['連番']) || 0) - (Number(b['連番']) || 0); });
+  });
+  return { t: t, map: map };
+}
+
+/**
+ * その日の譲渡記録を、画面の形の配列で返す。
+ *
+ * まだ移行していないデータのために、譲渡記録シートに1件も無いときだけ
+ * 日報DBの旧8列を見にいきます(1件ぶん入っていることがあります)。
+ */
+function xfersOf_(iso, xi, dailyRow) {
+  const rows = (xi && xi.map[iso] ? xi.map[iso] : []).map(function (r) {
+    const o = {};
+    XFER_MAP.forEach(function (m) { o[m.key] = String(r[m.col] || '').trim(); });
+    return o;
+  });
+  if (rows.length || !dailyRow) return rows;
+
+  const legacy = {};
+  let any = false;
+  XFER_MAP.forEach(function (m) {
+    legacy[m.key] = String(dailyRow[m.col] || '').trim();
+    if (legacy[m.key]) any = true;
+  });
+  return any ? [legacy] : [];
+}
+
+/** 中身が1つでも入っている記録だけ残す */
+function xferClean_(list) {
+  return (list || []).map(function (x) {
+    const o = {};
+    XFER_MAP.forEach(function (m) { o[m.key] = String((x && x[m.key]) || '').trim(); });
+    return o;
+  }).filter(function (o) {
+    return XFER_MAP.some(function (m) { return o[m.key]; });
+  });
+}
+
+/** その日の譲渡記録を入れ替える。数が変わるので、消してから入れ直します */
+function writeXfers_(iso, list, actor) {
+  const xi = xferIndex_();
+  const old = (xi.map[iso] || []).map(function (r) { return r._row; })
+    .sort(function (a, b) { return b - a; });        // 下から消す(行番号がずれるため)
+  old.forEach(function (row) { xi.t.sh.deleteRow(row); });
+
+  const clean = xferClean_(list);
+  if (!clean.length) return clean;
+
+  const t = table_(SH.XFER);                         // 消したあとの状態で読み直す
+  clean.forEach(function (x, i) {
+    const patch = {
+      'ID': uid_('X'), '店舗コード': CFG.STORE_CODE, '日付': iso, '連番': i + 1,
+      '登録日時': new Date(), '登録者': String(actor || '')
+    };
+    XFER_MAP.forEach(function (m) { patch[m.col] = x[m.key]; });
+    appendRow_(t, patch);
+  });
+  return clean;
+}
+
 function dailyCountsByStaff_() {
   const t = table_(SH.DAILY);
   const c = {};
@@ -793,19 +953,29 @@ function dailyCountsByStaff_() {
   return c;
 }
 
-/** 1行を画面の形に変換する */
-function toDay_(iso, row, terms) {
+/**
+ * 1行を画面の形に変換する。
+ *
+ * note  … 管理に関する事項(帳票 上段F列)。自由記述。1日1つ
+ * xfers … 譲渡・譲受記録(帳票 下段)。1日に何件でも。別シートから引く
+ *
+ * @param {Object} xi xferIndex_() の結果。渡さないと xfers は空のまま
+ */
+function toDay_(iso, row, terms, xi) {
   const base = {
     date: iso, dow: dowOf_(iso),
     rx: null, inquiry: null,
     roomTemp: null, roomHumid: null, coldTemp: null, coldHumid: null,
-    xKind: '', xPartner: '', xMaker: '', xDrug: '',
-    xPack: '', xQty: '', xLot: '', xExpiry: '',
+    note: '',
+    xfers: [],
     staff: '', admin: '', savedAt: '', approvedAt: '', lockedBy: '',
     chief: chiefOn_(iso, terms),
     state: 'empty'
   };
-  if (!row) return base;
+  if (!row) {
+    base.xfers = xfersOf_(iso, xi, null);
+    return base;
+  }
 
   base.rx        = num_(row['処方箋枚数']);
   base.inquiry   = num_(row['疑義照会件数']);
@@ -814,7 +984,8 @@ function toDay_(iso, row, terms) {
   base.coldTemp  = num_(row['冷所温度']);
   base.coldHumid = num_(row['冷所湿度']);
 
-  XFER_MAP.forEach(function (m) { base[m.key] = String(row[m.col] || ''); });
+  base.note  = String(row['管理に関する事項'] || '');
+  base.xfers = xfersOf_(iso, xi, row);
   base.staff    = String(row['担当者'] || '');
   base.admin    = String(row['管理者'] || '');
   base.savedAt  = hhmm_(row['入力日時']);
@@ -866,11 +1037,12 @@ function weekPayload_(anchorIso) {
   const start = weekStart_(anchor);
   const idx = dailyIndex_();
   const terms = termList_();
+  const xi = xferIndex_();
 
   const days = [];
   for (let i = 0; i < 7; i++) {
     const iso = addDays_(start, i);
-    days.push(toDay_(iso, idx.map[iso], terms));
+    days.push(toDay_(iso, idx.map[iso], terms, xi));
   }
 
   const staff = staffList_();
@@ -943,16 +1115,23 @@ function saveDay_(p) {
       '調剤室湿度': num_(p.roomHumid),
       '冷所温度': num_(p.coldTemp),
       '冷所湿度': num_(p.coldHumid),
+      '管理に関する事項': String(p.note || '').trim(),
       '担当者': staffName,
       '入力日時': new Date(),
       '状態': '入力済',
       '編集者': '',
       '編集開始': ''
     };
-    XFER_MAP.forEach(function (m) { patch[m.col] = String(p[m.key] || ''); });
+    // 旧8列が残っているブックでは空にしておく。残したままだと、譲渡を1件も
+    // 入れずに保存したときに古い値が復活する。落としたブックでは何もしない
+    LEGACY_XFER_COLS.forEach(function (c) {
+      if (idx.t.header.indexOf(c) >= 0) patch[c] = '';
+    });
 
     if (row) writeRow_(idx.t, row._row, patch);
     else appendRow_(idx.t, patch);
+
+    writeXfers_(iso, p.xfers, staffName);   // その日のぶんを入れ替える
 
     return weekPayload_(iso);
   } finally {
@@ -1185,6 +1364,215 @@ function seedForTest() {
   Logger.log(JSON.stringify(weekPayload_(null), null, 2).slice(0, 1200));
 }
 
+/**
+ * ★ 手で1回だけ実行して、日報DBの旧8列に入っている譲渡記録を
+ *    「譲渡記録」シートへ移します。
+ *
+ *    以前は譲渡記録を日報DBの列で持っていたので、1日1件しか入りませんでした。
+ *    移したあとは、1日に何件でも入れられます。
+ *
+ *    移したあと日報DBの旧8列は空にします(同じ内容が2か所に残ると、
+ *    どちらが正しいのか分からなくなるため)。
+ */
+function migrateXfers() {
+  const idx = dailyIndex_();
+  const xi = xferIndex_();
+  const moved = [];
+
+  if (!LEGACY_XFER_COLS.some(function (c) { return idx.t.header.indexOf(c) >= 0; })) {
+    console.log('日報DBに旧8列はありません。移すものはありません');
+    return 0;
+  }
+
+  idx.t.rows.forEach(function (r) {
+    if (String(r['店舗コード']) !== CFG.STORE_CODE) return;
+    const iso = fmt_(r['日付']);
+    if (!iso) return;
+    if (xi.map[iso] && xi.map[iso].length) return;    // すでに移してある
+
+    const one = {};
+    let any = false;
+    XFER_MAP.forEach(function (m) {
+      one[m.key] = String(r[m.col] || '').trim();
+      if (one[m.key]) any = true;
+    });
+    if (any) moved.push({ iso: iso, row: r._row, one: one });
+  });
+
+  if (!moved.length) {
+    console.log('移すものはありませんでした');
+    return 0;
+  }
+
+  moved.forEach(function (x) {
+    writeXfers_(x.iso, [x.one], '移行');
+    const patch = {};
+    LEGACY_XFER_COLS.forEach(function (c) {
+      if (idx.t.header.indexOf(c) >= 0) patch[c] = '';
+    });
+    writeRow_(idx.t, x.row, patch);
+    console.log('  ' + x.iso + '  ' + xferOne_(x.one));
+  });
+
+  console.log(moved.length + ' 件を「' + SH.XFER + '」シートへ移しました');
+  audit_('譲渡記録を別シートへ移行', moved.length + ' 件', '');
+  return moved.length;
+}
+
+/**
+ * ★ いま貼ってあるのがどの版かを出します。
+ *
+ *    「新しい関数が見つからない」ときは、たいてい古い Code.gs が
+ *    貼ったままになっています。まずこれを実行してください。
+ */
+function version() {
+  const out = [];
+  const say = function (l) { out.push(l); console.log(l); };
+
+  say('■ Code.gs の版: ' + CFG.VERSION);
+  say('');
+  say('■ シート');
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const sh = ss_().getSheetByName(name);
+    if (!sh) { say('   ［' + name + '］ありません'); return; }
+    const missing = missingColumns_(name, SHEET_COLS[name]);
+    say('   ［' + name + '］' + headerOf_(sh).length + '列'
+      + (missing.length ? '（不足: ' + missing.join('、') + '）' : ''));
+  });
+  say('   ［' + T_().SHEET + '］'
+    + (ss_().getSheetByName(T_().SHEET) ? 'あります' : 'ありません'));
+
+  const legacy = LEGACY_XFER_COLS.filter(function (c) {
+    const sh = ss_().getSheetByName(SH.DAILY);
+    return sh && headerOf_(sh).indexOf(c) >= 0;
+  });
+  say('');
+  if (legacy.length) {
+    say('■ 日報DBに古い列が ' + legacy.length + ' つ残っています');
+    say('   updateDatabase → dropLegacyXferColumns の順に実行すると片づきます');
+  } else {
+    say('■ 古い列はありません');
+  }
+
+  say('');
+  say('この一覧に updateDatabase が無い、または上の版が空欄なら、');
+  say('スプレッドシートに貼ってある Code.gs が古いままです。貼り直してください。');
+  return out.join('\n');
+}
+
+/* ------------------------------------------------------------
+ *  ブックを新しい形に合わせる
+ *
+ *  Code.gs を貼り替えたあと、これを1回実行すれば済むようにしてあります。
+ *  シートの作成・列の追加・書式・データの移行を、正しい順番で通します。
+ *  何度実行しても同じ結果になります(済んでいるものは飛ばします)。
+ * ---------------------------------------------------------- */
+
+/**
+ * ★ Code.gs を新しくしたら、これを1回実行してください。
+ *
+ *    やること
+ *      1. 足りないシートを作る
+ *      2. 足りない列を足す
+ *      3. 日付の列を文字列書式にする(タイムゾーンで1日ずれるのを防ぐ)
+ *      4. 印影フォルダを用意する
+ *      5. 古い形のデータを新しい置き場所へ移す
+ *      6. 残っている手作業を知らせる
+ */
+function updateDatabase() {
+  const out = [];
+  const say = function (line) { out.push(line); console.log(line); };
+
+  say('■ Code.gs の版: ' + CFG.VERSION);
+  say('');
+  say('■ シート');
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const cols = SHEET_COLS[name];
+    const had = !!ss_().getSheetByName(name);
+    const missing = had ? missingColumns_(name, cols) : cols.slice();
+    ensureSheet_(name, cols);
+    SCHEMA_CHECKED[name] = true;
+    if (!had) say('   ［' + name + '］作りました（' + cols.length + '列）');
+    else if (missing.length) say('   ［' + name + '］列を追加: ' + missing.join('、'));
+    else say('   ［' + name + '］そろっています');
+  });
+
+  say('');
+  say('■ 日付の書式');
+  formatTextColumn_(SH.DAILY, '日付');
+  formatTextColumn_(SH.TERM,  '就任日');
+  formatTextColumn_(SH.XFER,  '日付');
+  say('   日報DB.日付 / 管理薬剤師任期.就任日 / 譲渡記録.日付 を文字列にしました');
+
+  say('');
+  say('■ 印影フォルダ');
+  try {
+    sealFolder_();
+    say('   ' + CFG.SEAL_FOLDER_NAME + '（共有しないでください）');
+  } catch (e) {
+    say('   用意できませんでした: ' + e);
+  }
+
+  say('');
+  say('■ 譲渡記録の移行');
+  const moved = migrateXfers();
+  if (!moved) say('   移すものはありませんでした');
+
+  say('');
+  say('■ 残っていること');
+  const t = table_(SH.DAILY);
+  const legacy = LEGACY_XFER_COLS.filter(function (c) { return t.header.indexOf(c) >= 0; });
+  if (legacy.length) {
+    say('   日報DBに古い列が ' + legacy.length + ' つ残っています: ' + legacy.join('、'));
+    say('   中身は移し終えているので、dropLegacyXferColumns で落とせます');
+  } else {
+    say('   古い列はありません');
+  }
+  if (!ss_().getSheetByName(T_().SHEET)) {
+    say('   帳票テンプレートがありません。buildTemplate を実行してください');
+  }
+
+  say('');
+  say('おわり。デプロイし直すと画面にも反映されます。');
+  audit_('ブックを新しい形に合わせた',
+    (moved ? '譲渡記録を ' + moved + ' 件移行' : '移行なし'), '');
+  return out.join('\n');
+}
+
+/**
+ * ★ 移行のあとで、日報DBに残っている古い8列を落とします。
+ *
+ *    中身が1つでも残っている列は落としません(先に updateDatabase を実行してください)。
+ *    列を消すと元に戻せないので、実行前にブックのコピーを取っておくと安心です。
+ */
+function dropLegacyXferColumns() {
+  const t = table_(SH.DAILY);
+  const present = LEGACY_XFER_COLS.filter(function (c) { return t.header.indexOf(c) >= 0; });
+  if (!present.length) {
+    console.log('古い列はありません');
+    return 0;
+  }
+
+  // 1つでも中身が残っていたら触らない
+  const left = present.filter(function (c) {
+    return t.rows.some(function (r) { return String(r[c] || '').trim(); });
+  });
+  if (left.length) {
+    console.log('★ まだ中身が残っている列があります: ' + left.join('、'));
+    console.log('   先に updateDatabase を実行して、譲渡記録へ移してください');
+    return 0;
+  }
+
+  // 右から消す(左から消すと、そのたびに列番号がずれる)
+  present.map(function (c) { return t.header.indexOf(c) + 1; })
+    .sort(function (a, b) { return b - a; })
+    .forEach(function (col) { t.sh.deleteColumn(col); });
+
+  console.log(present.length + ' 列を落としました: ' + present.join('、'));
+  audit_('日報DBの古い列を削除', present.join('、'), '');
+  return present.length;
+}
+
 /** 期限切れの編集ロックを掃除する。1日1回のトリガーに入れておくと安心 */
 function sweepStaleLocks() {
   const idx = dailyIndex_();
@@ -1260,7 +1648,7 @@ function buildTemplate() {
   mergeSet_(sh, 1, C.DATE, t.HEAD_ROWS, 1, t.HEADER.DATE);
   mergeSet_(sh, 1, C.RX,   1, 2, t.HEADER.RX);      // B:C
   mergeSet_(sh, 1, C.INQ,  1, 2, t.HEADER.INQ);     // D:E
-  sh.getRange(1, C.INQ + 2).setValue(t.HEADER.NOTE);          // F
+  sh.getRange(1, C.MGMT).setValue(t.HEADER.NOTE);             // F
   mergeSet_(sh, 1, C.ROOM_T, 1, 2, t.HEADER.ROOM);  // G:H
   mergeSet_(sh, 1, C.COLD_T, 1, 2, t.HEADER.COLD);  // I:J
   sh.getRange(1, C.ADMIN).setValue(t.HEADER.ADMIN);
@@ -1463,7 +1851,15 @@ function dumpTemplateLayout() {
   out.push('');
   out.push('■ 合計 : 幅 ' + widths.reduce(function (a, b) { return a + b; }, 0)
     + ' px / 高さ ' + heights.reduce(function (a, b) { return a + b; }, 0) + ' px');
-  out.push('  ※ A4横の印刷可能幅はおよそ 1030px 相当（余白0.4インチのとき）');
+  const fit = printFit_();
+  if (fit) {
+    out.push('  ※ ' + CFG.PDF.PAGE + (CFG.PDF.LANDSCAPE ? '横' : '縦')
+      + '・余白' + CFG.PDF.MARGIN_IN + 'インチ で印刷できるのは 幅 '
+      + Math.round(fit.availW) + 'px / 高さ ' + Math.round(fit.availH) + 'px');
+    out.push('  ※ ' + (fit.fits ? '原寸で収まっています'
+      : '★ はみ出しています。幅を ' + Math.ceil(fit.width + CFG.PDF.EDGE_GAP_PX - fit.availW)
+        + 'px 詰めてください'));
+  }
 
   out.push('');
   out.push('■ CFG.TEMPLATE に貼れる形');
@@ -1495,17 +1891,18 @@ function dumpTemplateLayout() {
  * ========================================================== */
 
 /** 帳票用に整えた1週間分のデータ(画面のプレビューでも使う) */
-function weekRows_(startIso, idx, terms) {
+function weekRows_(startIso, idx, terms, xi) {
   const rows = [];
   for (let i = 0; i < PRINT.DAY_ROWS; i++) {
     const iso = addDays_(startIso, i);
-    const d = toDay_(iso, idx.map[iso], terms);
+    const d = toDay_(iso, idx.map[iso], terms, xi);
     rows.push({
       date: iso,
       dow: d.dow,
       hours: CFG.BUSINESS_HOURS,
       rx: d.rx, inquiry: d.inquiry,
-      note: xferLine_(d),
+      note: d.note,          // 上段F列。管理に関する事項
+      xfers: xferLines_(d),  // 下段。譲渡・譲受記録(0件以上)
       roomTemp: d.roomTemp, roomHumid: d.roomHumid,
       coldTemp: d.coldTemp, coldHumid: d.coldHumid,
       filled: d.state !== 'empty' && d.state !== 'editing',
@@ -1517,11 +1914,15 @@ function weekRows_(startIso, idx, terms) {
   return rows;
 }
 
-/** 管理に関する事項を1行にまとめる */
-function xferLine_(d) {
-  const parts = XFER_MAP.map(function (m) { return String(d[m.key] || '').trim(); });
-  if (!parts.some(function (x) { return x; })) return '';
-  return parts.filter(function (x) { return x; }).join('／');
+/** 譲渡記録1件を、帳票の1行ぶんの文字列にする */
+function xferOne_(x) {
+  return XFER_MAP.map(function (m) { return String((x && x[m.key]) || '').trim(); })
+    .filter(function (v) { return v; }).join('／');
+}
+
+/** その日の譲渡記録を、帳票の下段に出す行の配列にする */
+function xferLines_(d) {
+  return (d.xfers || []).map(xferOne_).filter(function (v) { return v; });
 }
 
 /**
@@ -1595,8 +1996,22 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing)
   sh.showSheet();
   mark('copy', t0);
 
-  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ---- */
+  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ----
+   *
+   *  セルを1つずつ書かず、隣り合う列をまとめて setValues で書きます。
+   *  まとめられるのは結合されていない範囲だけなので、次の2かたまりです。
+   *    B〜E … 処方箋枚数・疑義照会と、その単位
+   *    G〜J … 調剤室と冷所の温湿度
+   *  日付(A)は2行ぶち抜き、管理に関する事項(下段B〜L)も結合されているので、
+   *  こちらは左上のセルに1つずつ書きます。 */
   t0 = Date.now();
+  const keepBlank = t.KEEP_BLANK_PLACEHOLDER;
+  // 値が無いときは、テンプレートの下地(℃　/ や %)をそのまま書き戻す
+  const orBlank = function (v, ph) {
+    if (v !== null && v !== undefined && v !== '') return v;
+    return keepBlank ? ph : '';
+  };
+
   rows.forEach(function (r, i) {
     const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
     const r2 = r1 + 1;
@@ -1605,22 +2020,44 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing)
     sh.getRange(r1, t.COL.DATE).setValue(
       r.date.replace(/-/g, '/') + '\n' + r.dow + '\n' + r.hours);
 
-    // 数値。単位は表示形式で付くので、値は数値のまま入れる
-    putNum_(sh, r1, t.COL.RX,     r.filled ? r.rx : null,  t.FMT.RX);
-    putNum_(sh, r1, t.COL.INQ,    r.filled ? r.inquiry : null, t.FMT.INQ);
-    putNum_(sh, r1, t.COL.ROOM_T, r.roomTemp,  t.FMT.TEMP);
-    putNum_(sh, r1, t.COL.ROOM_H, r.roomHumid, t.FMT.HUMID);
-    putNum_(sh, r1, t.COL.COLD_T, r.coldTemp,  t.FMT.TEMP);
-    putNum_(sh, r1, t.COL.COLD_H, r.coldHumid, t.FMT.HUMID);
+    // 処方箋枚数・疑義照会と、その単位(B〜E)。
+    // 単位はテンプレートと同じ文字を書き戻すので、見た目は変わりません
+    sh.getRange(r1, t.COL.RX, 1, t.COL.INQ + 1 - t.COL.RX + 1)
+      .setValues([[
+        orBlank(r.filled ? r.rx : null, ''), t.UNIT_TEXT.RX,
+        orBlank(r.filled ? r.inquiry : null, ''), t.UNIT_TEXT.INQ
+      ]])
+      .setNumberFormats([[t.FMT.RX, '@', t.FMT.INQ, '@']]);
 
-    // 下段。管理に関する事項(B〜Lが結合されている)
-    if (r.note) sh.getRange(r2, t.COL.NOTE).setValue(r.note);
+    // 温湿度(G〜J)
+    const temp = sh.getRange(r1, t.COL.ROOM_T, 1, t.COL.COLD_H - t.COL.ROOM_T + 1);
+    temp.setValues([[
+      orBlank(r.roomTemp,  t.PLACEHOLDER.TEMP),
+      orBlank(r.roomHumid, t.PLACEHOLDER.HUMID),
+      orBlank(r.coldTemp,  t.PLACEHOLDER.TEMP),
+      orBlank(r.coldHumid, t.PLACEHOLDER.HUMID)
+    ]]).setNumberFormats([[t.FMT.TEMP, t.FMT.HUMID, t.FMT.TEMP, t.FMT.HUMID]]);
 
-    // 管理基準を外れた値は赤字にする(逸脱を目立たせるため)
-    if (outOfRange_(r.roomTemp,  R.ROOM_TEMP))  redCell_(sh, r1, t.COL.ROOM_T);
-    if (outOfRange_(r.roomHumid, R.ROOM_HUMID)) redCell_(sh, r1, t.COL.ROOM_H);
-    if (outOfRange_(r.coldTemp,  R.COLD_TEMP))  redCell_(sh, r1, t.COL.COLD_T);
-    if (outOfRange_(r.coldHumid, R.COLD_HUMID)) redCell_(sh, r1, t.COL.COLD_H);
+    // 管理基準を外れた値は赤字にする(逸脱を目立たせるため)。
+    // 逸脱が1つも無い日は、テンプレートの書式のまま触りません
+    const bad = [
+      outOfRange_(r.roomTemp,  R.ROOM_TEMP),
+      outOfRange_(r.roomHumid, R.ROOM_HUMID),
+      outOfRange_(r.coldTemp,  R.COLD_TEMP),
+      outOfRange_(r.coldHumid, R.COLD_HUMID)
+    ];
+    if (bad.some(function (x) { return x; })) {
+      temp.setFontColors([bad.map(function (x) { return x ? ALERT_RED : '#000000'; })])
+          .setFontWeights([bad.map(function (x) { return x ? 'bold' : 'normal'; })]);
+    }
+
+    // 上段F。管理に関する事項(その日の特記事項)
+    if (r.note) sh.getRange(r1, t.COL.MGMT).setValue(r.note);
+
+    // 下段(B〜Lが結合されている)。譲渡・譲受記録。何件でも1つのセルに並べる
+    if (r.xfers && r.xfers.length) {
+      sh.getRange(r2, t.COL.NOTE).setValue(r.xfers.join('\n'));
+    }
   });
 
   // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
@@ -1740,18 +2177,8 @@ function sealBase_(temp, tpl, rows, seals, geo, cache) {
   return { sheet: base, adminDone: true, staffDone: withStaff };
 }
 
-/** 数値を入れて表示形式を合わせる。値が無い日はテンプレートのまま残す */
-function putNum_(sh, row, col, v, fmt) {
-  if (v === null || v === undefined || v === '') {
-    if (!T_().KEEP_BLANK_PLACEHOLDER) sh.getRange(row, col).clearContent();
-    return;
-  }
-  sh.getRange(row, col).setNumberFormat(fmt).setValue(v);
-}
-
-function redCell_(sh, row, col) {
-  sh.getRange(row, col).setFontColor('#c42a26').setFontWeight('bold');
-}
+/** 管理基準を外れた値の文字色 */
+const ALERT_RED = '#c42a26';
 
 /** セルの中央に印影を置く。
  *  列幅・行の高さはシートから読むので、テンプレートを直しても中央のままです */
@@ -1776,7 +2203,7 @@ function stampCell_(sh, row, col, blob, geo) {
 function getPrintPreview(anchorIso) {
   return guard_('getPrintPreview', function () {
     const start = weekStart_(anchorIso ? fmt_(anchorIso) : today_());
-    const rows = weekRows_(start, dailyIndex_(), termList_());
+    const rows = weekRows_(start, dailyIndex_(), termList_(), xferIndex_());
     const seals = {};
     staffList_().forEach(function (s) {
       if (s.sealFileId) seals[s.name] = sealDataUrl_(s.sealFileId);
@@ -1817,7 +2244,12 @@ function weeksBetween_(fromIso, toIso) {
  * @param {Object} p {from:'yyyy-MM-dd', to:'yyyy-MM-dd', title:'2026年8月分'}
  */
 function startExport(p) {
-  return guard_('startExport', function () {
+  return guard_('startExport', function () { return startExport_(p); });
+}
+
+/** 出力の開始そのもの。月次の確定(startFreeze)からも呼びます */
+function startExport_(p) {
+  {
     // 出力先の一時ファイルはジョブ1件ぶんしか覚えられない。
     // 走っているうちに次を始めると、前の一時ファイルが行方不明になる
     const cur = currentJob_();
@@ -1838,7 +2270,7 @@ function startExport(p) {
     if (weeks.length > 60) throw new Error('一度に出力できるのは60週までです。期間を分けてください');
 
     // 出力先の一時スプレッドシート(最後にPDFにしてから捨てる)
-    const title = (p.title || (from + '_' + to)) + '_業務日報';
+    const title = p.title || (from + '_' + to + '_業務日報');
     const temp = SpreadsheetApp.create(title);
     temp.getSheets()[0].setName('_');   // 既定シートは最後に消す
 
@@ -1853,7 +2285,7 @@ function startExport(p) {
     PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
     audit_('帳票の出力を開始', from + ' 〜 ' + to + '（' + weeks.length + '週）', p.actor);
     return job;
-  });
+  }
 }
 
 /** 続きを処理する。時間が来たら止まるので、完了まで繰り返し呼びます */
@@ -1866,6 +2298,7 @@ function runExportChunk() {
     const temp = SpreadsheetApp.openById(job.tempId);
     const idx = dailyIndex_();
     const terms = termList_();
+    const xi = xferIndex_();               // 譲渡記録も1回だけ読む
     const seals = sealBlobMap_();          // 印影は1回だけ読む(ここが効く)
     const tpl = templateSheet_();          // テンプレートの引き直しも1回に
     const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
@@ -1875,7 +2308,7 @@ function runExportChunk() {
     // (1回きりなら、下ごしらえの複製ぶんだけ損になるため)
     const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
     for (let i = job.done; i < job.weeks.length; i++) {
-      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms));
+      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms, xi));
       base.count[k.admin] = (base.count[k.admin] || 0) + 1;
       base.count[k.full]  = (base.count[k.full]  || 0) + 1;
     }
@@ -1883,7 +2316,7 @@ function runExportChunk() {
     try {
       while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
         const w = job.weeks[job.done];
-        const rows = weekRows_(w, idx, terms);
+        const rows = weekRows_(w, idx, terms, xi);
         const b = sealBase_(temp, tpl, rows, seals, geo, base);
         renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
         job.done++;
@@ -1949,13 +2382,21 @@ function finishExport_(job, temp) {
     SpreadsheetApp.flush();
 
     const pdf = exportPdf_(job.tempId, job.title);
-    const file = outFolder_().createFile(pdf);
+    const folder = (job.kind === 'freeze')
+      ? outFolderFor_(job.month.slice(0, 4))
+      : outFolder_();
+    const file = folder.createFile(pdf);
 
     job.state = 'done';
     job.pdfUrl = file.getUrl();
     job.finishedAt = new Date().toISOString();
     rememberRate_(job);        // 次に出すときの「およそ何分」に使う
-    audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+
+    if (job.kind === 'freeze') {
+      recordFix_(job, file);   // 確定台帳に版として残す
+    } else {
+      audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+    }
   } catch (e) {
     job.state = 'error';
     job.message = String(e && e.message ? e.message : e);
@@ -2022,7 +2463,7 @@ function benchmarkExport() {
   const tCreate = Date.now() - t0;
 
   try {
-    const rows = weekRows_(start, idx, terms);
+    const rows = weekRows_(start, idx, terms, xferIndex_());
     const timing = {};
     const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
     const k = sealKeys_(rows);
@@ -2088,14 +2529,34 @@ function checkPrintFit() {
   console.log('■ 結果');
   if (f.fits) {
     console.log('   原寸で収まります。縮小せずに出力するので、外枠は欠けません。');
+    console.log('   余り 幅 ' + Math.floor(f.availW - f.width - cfg.EDGE_GAP_PX) + 'px'
+      + ' / 高さ ' + Math.floor(f.availH - f.height - cfg.EDGE_GAP_PX) + 'px');
   } else {
+    const cut = Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW);
+    // これ以下の余白なら収まる、という値(0.01インチ刻みで下から探す)
+    let ok = 0;
+    for (let m = 0.05; m <= cfg.MARGIN_IN; m += 0.01) {
+      const aw = ((cfg.LANDSCAPE ? 297 : 210) / 25.4 - m * 2) * 96;
+      if (f.width + cfg.EDGE_GAP_PX <= aw) ok = Math.round(m * 100) / 100;
+    }
+
     console.log('   はみ出すので ' + Math.round(f.scale * 1000) / 10 + '% に縮小します。');
     console.log('   縮小すると帳票の幅が印刷できる幅と一致し、外枠が切り取り線の');
-    console.log('   真上に来ます（四隅が欠けて見える原因）。外枠は太くしてあるので');
-    console.log('   欠けにくくしていますが、気になるときは次のどちらかを。');
-    console.log('     ・CFG.PDF.MARGIN_IN を 0.2 に下げる（原寸で収まるようになります）');
-    console.log('     ・帳票テンプレートの列幅を合計 '
-      + Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW) + 'px ぶん詰める');
+    console.log('   真上に来ます（四隅が欠けて見える原因）。');
+    console.log('');
+    console.log('   直し方（上のほうが安全です）');
+    console.log('     1. 帳票テンプレートの列幅を合計 ' + cut + 'px ぶん詰める');
+    console.log('        いちばん広い列から削り、dumpTemplateLayout の出力を');
+    console.log('        CFG.TEMPLATE.WIDTH に貼り戻してください');
+    if (ok) {
+      console.log('     2. CFG.PDF.MARGIN_IN を ' + ok + ' 以下に下げる（'
+        + (ok * 25.4).toFixed(1) + 'mm）');
+      console.log('        ただし MARGIN_IN はPDFの余白であって、プリンタが刷れる');
+      console.log('        範囲ではありません。多くのプリンタは紙の端から4〜5mmを');
+      console.log('        刷れないので、詰めすぎるとプリンタ側で切れます');
+    } else {
+      console.log('     2. 余白を下げても収まりません。列幅を詰めてください');
+    }
   }
   return f;
 }
@@ -2138,6 +2599,13 @@ function outFolder_() {
   const folder = found.hasNext() ? found.next() : parent.createFolder(PRINT.OUT_FOLDER);
   PROP.setProperty('OUT_FOLDER_ID', folder.getId());
   return folder;
+}
+
+/** 年ごとの入れ物。確定PDFは 業務日報_出力/2026/ のように分けて置きます */
+function outFolderFor_(year) {
+  const root = outFolder_();
+  const found = root.getFoldersByName(String(year));
+  return found.hasNext() ? found.next() : root.createFolder(String(year));
 }
 
 function currentJob_() {
@@ -2194,7 +2662,7 @@ function runExportNow_(from, to, title) {
 /** ★ 今週分だけ出す */
 function exportThisWeek() {
   const w = weekStart_(today_());
-  return runExportNow_(w, addDays_(w, 6), w + '_週報');
+  return runExportNow_(w, addDays_(w, 6), w + '_週報_業務日報');
 }
 
 /** ★ 前月分を出す */
@@ -2203,14 +2671,14 @@ function exportLastMonth() {
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   return runExportNow_(fmt_(first), fmt_(last),
-    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分');
+    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分_業務日報');
 }
 
 /** ★ 表示中の月を出す(記録簿のボタンと同じ範囲) */
 function exportThisMonth() {
   const t = today_();
   return runExportNow_(monthStart_(t), monthEnd_(t),
-    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分');
+    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分_業務日報');
 }
 
 /* ############################################################
@@ -2275,11 +2743,19 @@ function diffDay_(before, after) {
     if (a === b) return;
     out.push(f.label + ' ' + showNum_(a, f.dec, f.unit) + '→' + showNum_(b, f.dec, f.unit));
   });
-  XFER_MAP.forEach(function (m) {
-    const a = String(before[m.key] || '').trim();
-    const b = String(after[m.key] || '').trim();
-    if (a !== b) out.push(m.col + '「' + (a || '空欄') + '」→「' + (b || '空欄') + '」');
-  });
+  const na = String(before.note || '').trim();
+  const nb = String(after.note || '').trim();
+  if (na !== nb) {
+    out.push('管理に関する事項「' + (na || '空欄') + '」→「' + (nb || '空欄') + '」');
+  }
+
+  // 譲渡記録は件数が変わるので、行ごとに見比べる
+  const xa = (before.xfers || []).map(xferOne_);
+  const xb = xferClean_(after.xfers).map(xferOne_);
+  if (xa.join('\u0001') !== xb.join('\u0001')) {
+    out.push('譲渡・譲受記録 ' + xa.length + '件 → ' + xb.length + '件'
+      + (xb.length ? '：' + xb.join(' ／ ') : ''));
+  }
   return out;
 }
 
@@ -2299,6 +2775,7 @@ function ledgerPayload_(anchorIso) {
 
   const idx   = dailyIndex_();
   const terms = termList_();
+  const xi    = xferIndex_();
   const staff = staffList_();
 
   const seals = {};
@@ -2319,13 +2796,14 @@ function ledgerPayload_(anchorIso) {
     const rows = [];
     for (let i = 0; i < PRINT.DAY_ROWS; i++) {
       const iso = addDays_(w, i);
-      const d = toDay_(iso, idx.map[iso], terms);
+      const d = toDay_(iso, idx.map[iso], terms, xi);
       const row = {
         date: iso, dow: d.dow, hours: CFG.BUSINESS_HOURS,
         rx: d.rx, inquiry: d.inquiry,
         roomTemp: d.roomTemp, roomHumid: d.roomHumid,
         coldTemp: d.coldTemp, coldHumid: d.coldHumid,
-        note: xferLine_(d),
+        note: d.note,          // 上段F列。管理に関する事項
+        xfers: d.xfers,        // 下段。譲渡・譲受記録(0件以上)
         state: d.state,
         filled: d.state !== 'empty' && d.state !== 'editing',
         approved: d.state === 'approved',
@@ -2338,7 +2816,6 @@ function ledgerPayload_(anchorIso) {
         future: iso > today,
         alerts: rangeAlerts_(d)
       };
-      XFER_MAP.forEach(function (m) { row[m.key] = d[m.key]; });
       rows.push(row);
 
       if (!row.inMonth) continue;
@@ -2378,7 +2855,8 @@ function ledgerPayload_(anchorIso) {
     seals: seals,
     weeks: weeks,
     stat: stat,
-    alerts: alertList
+    alerts: alertList,
+    freeze: freezeCheck_(mStart.slice(0, 7), idx, terms)
   };
 }
 
@@ -2410,7 +2888,7 @@ function saveLedgerDay_(p) {
   if (!actor) throw new Error('操作者が特定できません');
 
   const terms  = termList_();
-  const before = toDay_(iso, dailyIndex_().map[iso], terms);
+  const before = toDay_(iso, dailyIndex_().map[iso], terms, xferIndex_());
   const wasApproved = before.state === 'approved';
 
   if (wasApproved && !p.force) {
@@ -2438,9 +2916,9 @@ function saveLedgerDay_(p) {
     }
   }
 
-  const q = { date: iso, staff: staffName, force: true };
+  const q = { date: iso, staff: staffName, force: true,
+              note: p.note, xfers: p.xfers };
   DIFF_FIELDS.forEach(function (f) { q[f.key] = p[f.key]; });
-  XFER_MAP.forEach(function (m) { q[m.key] = p[m.key]; });
   saveDay_(q);
 
   if (wasApproved) {
@@ -2477,3 +2955,498 @@ function unapproveLedgerDay(p) { return guard_('unapproveLedgerDay', function ()
   unapproveDay_(p);
   return ledgerPayload_(p.date);
 }); }
+
+
+/* ############################################################
+   9. 月次の確定(PDFに焼いて残す)
+   ############################################################
+   日々の記録は「データ」が正本で、画面(記録簿ビュー)から毎回描き直します。
+   ただしそれだけだと、あとから印影を差し替えたりテンプレートの列幅を
+   変えたりしたときに、過去の帳票の見た目まで変わってしまいます。
+   監査で「これは当時のものです」と言えなくなるため、月が締まった時点で
+   1回だけPDFに焼き、それを残します。
+
+   ・確定できるのは「月が終わっていて、未記録が無く、全日が承認済み」のときだけ
+   ・訂正が出たら、承認を解除して直し、もう一度確定する。
+     前の版は消さず、新しい版として積み増します(v1, v2, …)
+   ・変更履歴シートに「何をなぜ直したか」が残るので、版と履歴が対応します
+
+   確定PDFは 業務日報_出力/<年>/ に、次の名前で入ります。
+     2026-08_業務日報_v2_確定20260915.pdf
+   ############################################################ */
+
+/** その月の記録の埋まり具合。記録簿を作るときは idx / terms を渡して読み直しを避けます */
+function monthStats_(month, idx, terms) {
+  const mStart = month + '-01';
+  const mEnd = monthEnd_(mStart);
+  const i = idx || dailyIndex_();
+  const tm = terms || termList_();
+  const out = { month: month, start: mStart, end: mEnd,
+                days: 0, filled: 0, approved: 0, missing: 0 };
+
+  for (let d = mStart; d <= mEnd; d = addDays_(d, 1)) {
+    out.days++;
+    const day = toDay_(d, i.map[d], tm);
+    if (day.state === 'empty' || day.state === 'editing') { out.missing++; continue; }
+    out.filled++;
+    if (day.state === 'approved') out.approved++;
+  }
+  return out;
+}
+
+/** 確定台帳をぜんぶ読む(新しい順) */
+function fixList_() {
+  const t = table_(SH.FIX);
+  return t.rows.map(function (r) {
+    return {
+      id: String(r['ID']),
+      month: String(r['対象月']),
+      version: Number(r['版']) || 0,
+      at: (r['確定日時'] instanceof Date)
+        ? Utilities.formatDate(r['確定日時'], CFG.TZ, 'yyyy/MM/dd HH:mm')
+        : String(r['確定日時'] || ''),
+      by: String(r['確定者'] || ''),
+      name: String(r['ファイル名'] || ''),
+      fileId: String(r['ファイルID'] || ''),
+      url: String(r['リンク'] || ''),
+      hash: String(r['ハッシュ'] || ''),
+      chain: String(r['連鎖'] || ''),
+      alive: String(r['状態'] || '有効') !== '取消',
+      note: String(r['備考'] || ''),
+      _row: r._row
+    };
+  }).sort(function (a, b) {
+    if (a.month !== b.month) return a.month < b.month ? 1 : -1;   // 新しい月が先
+    return b.version - a.version;                                  // 新しい版が先
+  });
+}
+
+/** その月の版だけ(新しい順) */
+function fixOf_(month, all) {
+  return (all || fixList_()).filter(function (x) { return x.month === month; });
+}
+
+/** 次に付ける版番号。取り消した版も番号は使い切ります(番号を再利用しない) */
+function nextVersion_(versions) {
+  return versions.reduce(function (m, x) { return Math.max(m, x.version); }, 0) + 1;
+}
+
+/**
+ * その月を確定できるか。できないときは理由を並べて返します。
+ * 画面はこれをそのまま出すので、理由は運用者が読んで動ける言葉にしています。
+ */
+function freezeCheck_(month, idx, terms) {
+  const stat = monthStats_(month, idx, terms);
+  const versions = fixOf_(month);
+  const live = versions.filter(function (x) { return x.alive; });
+  const reasons = [];
+
+  if (stat.end >= today_()) reasons.push('その月がまだ終わっていません');
+  if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
+  const unapproved = stat.filled - stat.approved;
+  if (unapproved) reasons.push('未承認が ' + unapproved + ' 日あります');
+
+  return {
+    month: month,
+    stat: stat,
+    unapproved: unapproved,
+    versions: versions,
+    latest: live.length ? live[0] : null,
+    frozen: !!live.length,
+    nextVersion: nextVersion_(versions),
+    ok: !reasons.length,
+    reasons: reasons
+  };
+}
+
+/**
+ * 確定した結果を台帳に1行残す。
+ *
+ * ハッシュは、Driveに保存されたPDFそのものから取ります(渡された blob ではなく)。
+ * 「保存されている物」と「台帳の記録」を突き合わせたいので、保存後の実物を読みます。
+ */
+function recordFix_(job, file) {
+  const t = table_(SH.FIX);
+  const at = new Date();
+  const hash = sha256Bytes_(file.getBlob().getBytes());
+  const chain = chainOf_(lastChain_(t), job.month, job.version, at, hash);
+
+  appendRow_(t, {
+    'ID': uid_('F'),
+    '対象月': job.month,
+    '版': job.version,
+    '確定日時': at,
+    '確定者': job.actor || '',
+    'ファイル名': file.getName(),
+    'ファイルID': file.getId(),
+    'リンク': file.getUrl(),
+    'ハッシュ': hash,
+    '連鎖': chain,
+    '状態': '有効',
+    '備考': String(job.note || '')
+  });
+  audit_('月次を確定', job.month + '（第' + job.version + '版）'
+    + '／SHA-256 ' + hash.slice(0, 16) + '…'
+    + (job.note ? '：' + job.note : ''), job.actor || '');
+}
+
+/**
+ * 月次の確定を始める。あとは runExportChunk を繰り返すだけで、
+ * 期間指定の出力と同じ仕組みで進みます。
+ */
+function startFreeze(p) {
+  return guard_('startFreeze', function () {
+    const month = String(p.month || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('対象月が正しくありません');
+
+    const chk = freezeCheck_(month);
+    if (!chk.ok) {
+      throw new Error('この月はまだ確定できません：' + chk.reasons.join('／'));
+    }
+    // 2回目以降は、なぜもう一度確定するのかを残してもらう
+    const note = String(p.note || '').trim();
+    if (chk.frozen && !note) {
+      throw new Error('すでに第' + chk.latest.version
+        + '版があります。作り直す理由を書いてください');
+    }
+
+    const v = chk.nextVersion;
+    const job = startExport_({
+      from: chk.stat.start,
+      to: chk.stat.end,
+      title: month + '_業務日報_v' + v
+        + '_確定' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyyMMdd'),
+      actor: p.actor
+    });
+    job.kind = 'freeze';
+    job.month = month;
+    job.version = v;
+    job.note = note;
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    return job;
+  });
+}
+
+/**
+ * 誤って確定した版を取り消す。ファイルもDriveの記録も消しません。
+ * 消してしまうと「間違えて出した」という事実まで消えてしまうため、
+ * 台帳に取消として残し、理由を付けます。
+ */
+function voidFix(p) {
+  return guard_('voidFix', function () {
+    const why = String(p.reason || '').trim();
+    if (!why) throw new Error('取り消す理由を書いてください');
+
+    const t = table_(SH.FIX);
+    const row = t.rows.filter(function (r) { return String(r['ID']) === String(p.id); })[0];
+    if (!row) throw new Error('確定台帳にありません');
+    if (String(row['状態'] || '') === '取消') throw new Error('すでに取り消されています');
+
+    writeRow_(t, row._row, {
+      '状態': '取消',
+      '備考': String(row['備考'] || '') + (row['備考'] ? ' / ' : '') + '取消：' + why
+    });
+    audit_('確定を取り消し',
+      String(row['対象月']) + '（第' + row['版'] + '版）：' + why, p.actor || '');
+    return fixPayload_();
+  });
+}
+
+/** 確定簿の画面に渡す形 */
+function fixPayload_() {
+  const all = fixList_();
+  const byMonth = {};
+  all.forEach(function (x) {
+    (byMonth[x.month] = byMonth[x.month] || []).push(x);
+  });
+  const months = Object.keys(byMonth).sort().reverse().map(function (m) {
+    const live = byMonth[m].filter(function (x) { return x.alive; });
+    return {
+      month: m,
+      label: m.slice(0, 4) + '年' + Number(m.slice(5, 7)) + '月',
+      versions: byMonth[m],
+      latest: live.length ? live[0] : null
+    };
+  });
+  return { store: CFG.STORE_NAME, today: today_(), months: months };
+}
+
+/* ---------- 画面から呼ばれる入口 ---------- */
+
+function getFixList() { return guard_('getFixList', function () {
+  return fixPayload_();
+}); }
+
+function getFreezeState(month) { return guard_('getFreezeState', function () {
+  return freezeCheck_(String(month || today_()).slice(0, 7));
+}); }
+
+/**
+ * ★ 手で実行して、前月を確定します。画面から確定するのと同じ経路を通ります。
+ */
+function freezeLastMonth() {
+  const now = new Date();
+  const m = Utilities.formatDate(new Date(now.getFullYear(), now.getMonth() - 1, 1),
+                                 CFG.TZ, 'yyyy-MM');
+  const chk = freezeCheck_(m);
+  if (!chk.ok) {
+    console.log('［' + m + '］まだ確定できません：' + chk.reasons.join(' / '));
+    return chk;
+  }
+  clearExport();
+  startFreeze({ month: m, actor: '手動実行', note: chk.frozen ? '手動で作り直し' : '' });
+  let job = runExportChunk();
+  while (job && job.state === 'running') job = runExportChunk();
+  console.log(job && job.state === 'done'
+    ? '［' + m + '］第' + job.version + '版を確定しました: ' + job.pdfUrl
+    : '確定できませんでした: ' + ((job && job.message) || '理由不明'));
+  return job;
+}
+
+
+/* ############################################################
+   10. 証跡（ハッシュ）と、まとめて渡すZIP
+   ############################################################
+   確定したPDFが「確定した時のまま」かどうかを、あとから確かめられるようにします。
+
+   ・ハッシュ … PDFそのもののSHA-256。中身が1バイトでも変われば変わります
+   ・連鎖    … 1つ前の連鎖とこの行をまとめたSHA-256。
+               台帳の古い行をこっそり書き換えると、それ以降の連鎖が全部合わなくなります
+
+   ここで分かるのは「変わっているかどうか」までです。
+   台帳を編集できる人は、ファイルと一緒にハッシュも書き換えられます。
+   本当の意味での否認防止には、時刻認証局など第三者の記録が要ります。
+   それでも、取り違え・破損・第三者による差し替えはこれで検出できます。
+
+   まとめて渡すときは、確定済みのPDFをそのままZIPにします。
+   PDFを1つに結合しないのは、結合すると別のファイルになってしまい、
+   台帳のハッシュがどれとも一致しなくなるためです。
+   ZIPには、どのPDFが何のハッシュなのかを書いた目録を同梱します。
+   ############################################################ */
+
+/** バイト列を16進の文字列に。computeDigest は符号つきで返すので & 0xFF する */
+function hex_(bytes) {
+  return bytes.map(function (b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+function sha256Bytes_(bytes) {
+  return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
+}
+
+function sha256Text_(text) {
+  return hex_(Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8));
+}
+
+/** 台帳のいちばん下の連鎖。無ければ空(最初の1件) */
+function lastChain_(t) {
+  const tb = t || table_(SH.FIX);
+  if (!tb.rows.length) return '';
+  return String(tb.rows[tb.rows.length - 1]['連鎖'] || '');
+}
+
+/** 1行ぶんの連鎖を作る。1つ前の連鎖を混ぜるので、途中を書き換えると以降が合わなくなる */
+function chainOf_(prev, month, version, at, hash) {
+  const atIso = (at instanceof Date) ? at.toISOString() : String(at);
+  return sha256Text_([prev, month, version, atIso, hash].join('|'));
+}
+
+/**
+ * ★ 手で実行して、確定PDFが確定時のままかを確かめます。
+ *    実行ログに、行ごとの結果が出ます。画面(確定簿)からも呼べます。
+ */
+function verifyFixes() {
+  return guard_('verifyFixes', function () { return verifyFixes_(); });
+}
+
+function verifyFixes_() {
+  const t = table_(SH.FIX);
+  const rows = t.rows;
+  const out = [];
+  let prev = '';
+  let bad = 0;
+
+  rows.forEach(function (r) {
+    const month = String(r['対象月']);
+    const version = Number(r['版']) || 0;
+    const hash = String(r['ハッシュ'] || '');
+    const chain = String(r['連鎖'] || '');
+    const item = { month: month, version: version, name: String(r['ファイル名'] || ''),
+                   alive: String(r['状態'] || '有効') !== '取消',
+                   state: 'ok', detail: '' };
+
+    if (!hash) {
+      item.state = 'none';
+      item.detail = 'ハッシュが記録されていません（この仕組みより前の確定です）';
+    } else {
+      // 1. Driveの実物と突き合わせる
+      let now = '';
+      try {
+        now = sha256Bytes_(DriveApp.getFileById(String(r['ファイルID'])).getBlob().getBytes());
+      } catch (e) {
+        item.state = 'missing';
+        item.detail = 'PDFが見つかりません（消されたか、権限がありません）';
+      }
+      if (item.state === 'ok') {
+        if (now !== hash) {
+          item.state = 'changed';
+          item.detail = 'PDFの中身が確定時と違います';
+        } else {
+          // 2. 台帳そのものが書き換えられていないか
+          const want = chainOf_(prev, month, version, r['確定日時'], hash);
+          if (chain && want !== chain) {
+            item.state = 'broken';
+            item.detail = '台帳の記録が書き換えられています';
+          }
+        }
+      }
+    }
+
+    if (item.state !== 'ok') bad++;
+    out.push(item);
+    prev = chain;
+  });
+
+  const label = { ok: '一致', none: 'ハッシュなし', missing: 'PDFなし',
+                  changed: '中身が変わっている', broken: '台帳が書き換えられている' };
+  console.log('■ 確定PDFの証跡（' + rows.length + ' 件）');
+  out.forEach(function (x) {
+    console.log('   ' + x.month + ' v' + x.version + (x.alive ? '' : '(取消)')
+      + ' … ' + label[x.state] + (x.detail ? ' … ' + x.detail : ''));
+  });
+  console.log('   ────────────────');
+  console.log(bad ? '   ★ ' + bad + ' 件に問題があります' : '   すべて確定時のままです');
+
+  return { total: rows.length, bad: bad, items: out, at: stamp_() };
+}
+
+/**
+ * ★ 手で実行して、ハッシュが無い古い行に後から入れます。
+ *
+ *    注意：後から入れたハッシュが証明するのは「入れた時点のファイル」までです。
+ *    確定した時点のものである保証にはならないので、備考にその旨を残します。
+ */
+function backfillFixHashes() {
+  const t = table_(SH.FIX);
+  let n = 0;
+  let prev = '';
+  t.rows.forEach(function (r) {
+    let hash = String(r['ハッシュ'] || '');
+    const month = String(r['対象月']);
+    const version = Number(r['版']) || 0;
+
+    if (!hash) {
+      try {
+        hash = sha256Bytes_(DriveApp.getFileById(String(r['ファイルID'])).getBlob().getBytes());
+      } catch (e) {
+        console.warn(month + ' v' + version + ' のPDFを読めませんでした');
+        prev = String(r['連鎖'] || '');
+        return;
+      }
+      n++;
+    }
+    const chain = chainOf_(prev, month, version, r['確定日時'], hash);
+    const note = String(r['備考'] || '');
+    writeRow_(t, r._row, {
+      'ハッシュ': hash,
+      '連鎖': chain,
+      '備考': note + (note ? ' / ' : '') + '後からハッシュを記録（' + today_() + '）'
+    });
+    prev = chain;
+  });
+  console.log(n ? n + ' 件にハッシュを入れました' : 'ハッシュの無い行はありませんでした');
+  if (n) audit_('確定台帳にハッシュを追記', n + ' 件', '');
+  return n;
+}
+
+/* ------------------------------------------------------------
+ *  まとめて渡す（ZIP）
+ * ---------------------------------------------------------- */
+
+/** ZIPに入れる目録。どのPDFが何のハッシュなのかを平文で残します */
+function bundleManifest_(items, from, to, actor) {
+  const line = [];
+  line.push(CFG.STORE_NAME + '　業務日報');
+  line.push('対象期間 : ' + from + ' 〜 ' + to);
+  line.push('作成日時 : ' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyy/MM/dd HH:mm'));
+  line.push('作成者   : ' + (actor || '—'));
+  line.push('');
+  line.push('この束は、確定済みのPDFをそのまま集めたものです。');
+  line.push('中身は確定した時点のままで、作り直していません。');
+  line.push('下の SHA-256 で、各PDFが確定時と同じものか確かめられます。');
+  line.push('');
+  line.push('----------------------------------------------------------------');
+  items.forEach(function (x) {
+    line.push('');
+    line.push(x.month + '　第' + x.version + '版');
+    line.push('  確定    : ' + x.at + '　' + (x.by || '—'));
+    line.push('  ファイル: ' + x.name);
+    line.push('  SHA-256 : ' + (x.hash || '（記録なし）'));
+    if (x.note) line.push('  備考    : ' + x.note);
+  });
+  line.push('');
+  line.push('----------------------------------------------------------------');
+  line.push('確認のしかた（Windows の PowerShell）');
+  line.push('  Get-FileHash .\\ファイル名.pdf -Algorithm SHA256');
+  line.push('');
+  // Windowsのメモ帳で開いても文字化けしないよう、BOM付きUTF-8・CRLFにする
+  return Utilities.newBlob('﻿' + line.join('\r\n'), 'text/plain', '目録.txt');
+}
+
+/**
+ * 期間ぶんの確定PDFを1つのZIPにまとめる。
+ *
+ * PDFを作り直さないので、待ち時間はファイルを読むぶんだけです。
+ * 各月は、取り消されていない最新の版を入れます。
+ *
+ * @param {Object} p { from:'2026-04', to:'2026-06', actor:'…' }
+ */
+function bundleFixes(p) {
+  return guard_('bundleFixes', function () {
+    const from = String(p.from || '').slice(0, 7);
+    const to = String(p.to || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) {
+      throw new Error('対象月が正しくありません');
+    }
+    if (from > to) throw new Error('開始の月が終わりの月より後になっています');
+
+    const all = fixList_();
+    const picked = [];
+    const seen = {};
+    all.forEach(function (x) {
+      if (!x.alive || x.month < from || x.month > to) return;
+      if (seen[x.month]) return;      // fixList_ は版の新しい順なので、最初のものが最新
+      seen[x.month] = true;
+      picked.push(x);
+    });
+    if (!picked.length) throw new Error('この期間に確定済みの月がありません');
+    if (picked.length > 36) throw new Error('一度にまとめられるのは36か月までです');
+
+    picked.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+
+    const blobs = [bundleManifest_(picked, from, to, p.actor)];
+    picked.forEach(function (x) {
+      const blob = DriveApp.getFileById(x.fileId).getBlob();
+      blobs.push(blob.setName(x.name));
+    });
+
+    const name = from + '_' + to + '_業務日報_'
+      + Utilities.formatDate(new Date(), CFG.TZ, 'yyyyMMdd');
+    const zip = Utilities.zip(blobs, name + '.zip');
+    const file = outFolder_().createFile(zip);
+
+    audit_('確定PDFをまとめて出力',
+      from + ' 〜 ' + to + '（' + picked.length + 'か月）', p.actor || '');
+
+    return {
+      name: file.getName(),
+      url: file.getUrl(),
+      months: picked.length,
+      items: picked.map(function (x) {
+        return { month: x.month, version: x.version, name: x.name, hash: x.hash };
+      })
+    };
+  });
+}

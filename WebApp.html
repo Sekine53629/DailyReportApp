@@ -75,6 +75,13 @@
 
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
+
+/* hidden は必ず効かせる。
+   ブラウザ既定の [hidden]{display:none} はユーザーエージェント側のルールなので、
+   .cols{display:grid} のように作者側で display を指定すると負けてしまう。
+   これが無いと、記録簿を選んでも入力画面が消えず、その下に記録簿が続いて出る。
+   画面の出し分けは hidden 一本でやっているので、ここで確実に止める。 */
+[hidden]{display:none !important}
 body{
   background:var(--ground);
   color:var(--ink);
@@ -91,15 +98,21 @@ button,input,select{font:inherit;color:inherit}
 /* ============================================================
    骨格 ― スマホは1カラム、PCは「週の状況 / 入力」の2カラム
    ============================================================ */
-.shell{max-width:1040px;margin:0 auto;padding:0 14px 40px}
+.shell{max-width:1040px;margin:0 auto;padding:16px 14px 40px}
 
+/* 画面の切り替えバー。本文の外に置いてあるので、どの画面を出していても
+   上に貼り付いたままになる。中に入れると、記録簿や確定簿では本文が短く、
+   少しスクロールしただけでバーごと流れて消えてしまう。 */
 .topbar{
-  /* sticky なので、中の .pickme はこのバーを基準に置ける */
-  position:sticky;top:0;z-index:20;
-  background:color-mix(in srgb, var(--ground) 86%, transparent);
+  position:sticky;top:0;z-index:30;
+  background:color-mix(in srgb, var(--ground) 88%, transparent);
   backdrop-filter:saturate(1.4) blur(8px);
   border-bottom:1px solid var(--line);
-  margin:0 -14px 16px;padding:10px 14px;
+}
+/* sticky なので、中の .pickme はこのバーを基準に置ける */
+.tb-in{
+  position:relative;
+  max-width:1200px;margin:0 auto;padding:10px 14px;
   display:flex;align-items:center;gap:10px;
 }
 .brand{display:flex;flex-direction:column;line-height:1.25;min-width:0}
@@ -129,7 +142,6 @@ button,input,select{font:inherit;color:inherit}
 @keyframes nudge{
   0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)}
 }
-.pickme[hidden]{display:none}
 .pickme{
   position:absolute;top:100%;right:74px;margin-top:6px;z-index:40;
   display:flex;align-items:center;gap:6px;max-width:min(19em,calc(100vw - 24px));
@@ -237,7 +249,6 @@ button,input,select{font:inherit;color:inherit}
 }
 @media (max-width:400px){ .weeknav .jump{margin-left:0;width:100%} }
 
-.pastbar[hidden]{display:none}
 .pastbar{
   display:flex;align-items:center;gap:4px;flex-wrap:wrap;
   padding:8px 16px;background:var(--info-soft);
@@ -326,6 +337,29 @@ button,input,select{font:inherit;color:inherit}
   background:var(--surface);font-size:15px;
 }
 .field.txt select:focus{outline:none;border-color:var(--accent)}
+.field.txt textarea{
+  width:100%;padding:11px 14px;border:1.5px solid var(--line-strong);border-radius:10px;
+  background:var(--surface);font:inherit;font-size:15px;line-height:1.6;
+  resize:vertical;min-height:5.2em;
+}
+.field.txt textarea:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+.field.txt textarea:disabled{background:var(--surface-2);color:var(--muted)}
+
+/* 譲渡・譲受記録。1件ぶんをひとかたまりにして、何件でも足せるようにする */
+.xrec{
+  border:1px solid var(--line);border-radius:10px;padding:12px;
+  background:var(--surface-2);margin-top:10px;
+}
+.xrec-hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.xrec-hd b{font-family:var(--disp);font-size:12px;color:var(--ink-2)}
+.xrec-hd .sp{flex:1}
+.xrec .xfer-body{margin-top:0}
+.xnone{
+  font-size:12px;color:var(--muted);line-height:1.7;
+  border:1px dashed var(--line-strong);border-radius:10px;padding:12px;margin-top:10px;
+}
+.xcount{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
 
 /* 管理に関する事項(譲渡記録) */
 .xfer{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}
@@ -441,16 +475,8 @@ button,input,select{font:inherit;color:inherit}
 }
 
 /* ============================================================
-   担当者の管理(モーダル)
+   名簿と管理薬剤師の画面、および入力用のモーダル
    ============================================================ */
-.iconbtn{
-  flex:0 0 auto;width:36px;height:36px;border-radius:50%;
-  border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);
-  display:grid;place-items:center;cursor:pointer;padding:0;
-}
-.iconbtn svg{width:18px;height:18px;stroke:var(--ink-2);fill:none;stroke-width:1.7}
-.iconbtn:hover{border-color:var(--line-strong)}
-
 .overlay{
   position:fixed;inset:0;z-index:50;display:none;
   background:rgba(10,20,17,.45);
@@ -472,6 +498,7 @@ button,input,select{font:inherit;color:inherit}
 }
 .sheet-hd h2{font-family:var(--disp);font-weight:700;font-size:16px;margin:0;flex:1}
 .sheet-bd{padding:16px 18px}
+#viewStaff .card{overflow:visible}
 
 /* 名簿の行 */
 .mrow{
@@ -480,7 +507,7 @@ button,input,select{font:inherit;color:inherit}
 }
 .mrow:first-of-type{border-top:0}
 .mrow .mn{font-family:var(--disp);font-weight:700;font-size:14.5px;flex:1;min-width:7em}
-.mrow.retired .mn{color:var(--muted);text-decoration:line-through}
+.mrow.off .mn{color:var(--muted)}
 .mini{
   border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;
   padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;
@@ -542,7 +569,7 @@ button,input,select{font:inherit;color:inherit}
 
 /* ---- 管理画面のタブ ---- */
 .tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line);
-  position:sticky;top:52px;background:var(--surface);z-index:2}
+  background:var(--surface)}
 .tab{
   border:0;background:none;padding:9px 12px 8px;cursor:pointer;
   font-family:var(--disp);font-weight:700;font-size:13px;color:var(--muted);
@@ -583,37 +610,15 @@ button,input,select{font:inherit;color:inherit}
 .formrow select:focus,.formrow input:focus{outline:none;border-color:var(--accent)}
 .formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
 
-/* ---- 帳票の出力(独立した画面) ---- */
-/* 帳票そのものに幅を回したいので、枠の内側は詰める */
-#viewExport .card-bd{padding:12px}
-@media (max-width:640px){ #viewExport .card-bd{padding:8px} }
-.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.range input[type="date"]{
-  flex:1;min-width:8.5em;padding:9px 11px;border:1.5px solid var(--line-strong);
-  border-radius:9px;background:var(--surface);font-size:14px;
-}
-.range input:focus{outline:none;border-color:var(--accent)}
-.range .tilde{color:var(--muted);font-size:13px}
-
-.pvwrap{
-  background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
-  padding:10px;overflow-x:auto;margin-bottom:6px;
-  width:fit-content;max-width:100%;margin-left:auto;margin-right:auto;
-}
-/* シートの実寸で描く。画面に収まらないときは縮めて全体を見せる
-   (拡大はしない。実寸より大きいと、刷ったときの印象とずれるため) */
-.pvwrap table.pv{margin:0 auto;transform-origin:top left}
-.pvwrap.fit{overflow-x:hidden}
-.pvwrap.fit table.pv{margin:0}
-.pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
-.pvscale:empty{display:none}
+/* ---- 確定簿(独立した画面) ---- */
+#viewExport .card-bd{padding:14px 16px 16px}
+@media (max-width:640px){ #viewExport .card-bd{padding:12px} }
+.tilde{color:var(--muted);font-size:13px}
 /* ============================================================
    出力の進み具合(画面下に固定)
    長い出力では画面を見ていられないので、スクロールしても
    画面を移動しても、いつでも残り時間が見えるようにする。
    ============================================================ */
-.jobbar[hidden]{display:none}
 .jobbar{
   position:fixed;left:0;right:0;bottom:0;z-index:55;
   background:color-mix(in srgb, var(--surface) 96%, transparent);
@@ -683,24 +688,12 @@ table.pv td.u{text-align:left;font-size:7.5px;color:#3d4a45}
 table.pv td.e{text-align:right;font-size:9.5px;white-space:nowrap}
 table.pv td.e.ng{color:#c42a26;font-weight:700}
 table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
+table.pv td.mg{font-size:8px;line-height:1.4;color:#111614;vertical-align:middle}
+table.pv td.mg.ed{padding:0;background:#fffdf3}
+table.pv td.mg.ed input{text-align:left;font-size:9px}
 table.pv td.st{text-align:center;padding:1px}
 table.pv td.st img{width:24px;height:24px;display:block;margin:0 auto}
 table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
-.pvnote{font-size:11px;color:var(--muted);margin:0 0 14px}
-
-.progress{margin:14px 0 4px}
-.progress .bar{height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden}
-.progress .bar i{display:block;height:100%;background:var(--accent);width:0;
-  transition:width .25s ease}
-.progress .txt{font-size:12px;color:var(--muted);margin-top:7px;
-  font-variant-numeric:tabular-nums}
-.donebox{
-  background:var(--ok-soft);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);
-  border-radius:10px;padding:12px 14px;margin-top:14px;
-}
-.donebox b{display:block;font-family:var(--disp);color:var(--ok);font-size:14px;margin-bottom:4px}
-.donebox a{color:var(--accent);font-weight:700;font-size:13px}
-
 /* ---- 変更履歴 ---- */
 .logline{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:12.5px}
 .logline:first-child{border-top:0}
@@ -728,11 +721,11 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    1か月ぶんを、帳票と同じ書式で週ごとに続けて表示する。
    立入検査でそのまま見せられるよう、操作用の部品は最小限にしてある。
    ============================================================ */
-.lgview[hidden]{display:none}
 .lgview{max-width:1200px;margin:0 auto;padding:0 14px 60px}
+.lgview.narrow{max-width:720px}
 
 .lg-bar{
-  position:sticky;top:0;z-index:25;
+  position:sticky;top:var(--tbh, 58px);z-index:25;
   display:flex;align-items:center;gap:8px;flex-wrap:wrap;
   margin:0 -14px 14px;padding:10px 14px;
   background:color-mix(in srgb, var(--ground) 88%, transparent);
@@ -771,7 +764,61 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-stat.warn .v{color:var(--warn)}
 .lg-stat.crit .v{color:var(--crit)}
 
-.lg-alerts[hidden]{display:none}
+/* 確定のパネル(記録簿)と、確定簿の一覧 */
+.lg-fix{
+  display:flex;align-items:flex-start;gap:10px;
+  border:1px solid var(--line);border-radius:10px;
+  padding:10px 12px;margin-bottom:12px;background:var(--surface);
+}
+.lg-fix .ic{font-size:15px;line-height:1.5}
+.lg-fix .bd{flex:1;min-width:0;font-size:12.5px;line-height:1.65;color:var(--ink-2)}
+.lg-fix .bd b{display:block;color:var(--ink);font-size:13px}
+.lg-fix .bd ul{margin:4px 0 0;padding-left:1.2em}
+.lg-fix .bd a{color:var(--accent);font-weight:600}
+.lg-fix.ok  {background:var(--ok-soft);   border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.lg-fix.wait{background:var(--warn-soft); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.lg-fix.go  {background:var(--info-soft); border-color:color-mix(in srgb,var(--info) 30%,transparent)}
+
+.fx-lead{font-size:12.5px;color:var(--muted);line-height:1.7;margin:0 0 14px}
+.fx-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.fx-tool{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--surface)}
+.fx-tool>b{font-size:12.5px;min-width:7.5em}
+.fx-tool select{font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid var(--line);
+  border-radius:6px;background:var(--surface);color:var(--ink)}
+.fx-tool .hint{flex-basis:100%;font-size:11.5px;color:var(--muted);line-height:1.6}
+.fx-report{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  font-size:12.5px;line-height:1.7;background:var(--surface-2)}
+.fx-report.good{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.fx-report.bad{background:var(--crit-soft);border-color:color-mix(in srgb,var(--crit) 30%,transparent)}
+.fx-report a{color:var(--accent);font-weight:600;margin-left:8px}
+.fx-rep-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+.fx-rep-list>div{font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.fx-rep-list>div.bad{color:var(--crit);font-weight:600}
+.fx-rep-list code{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fx-ver .hash{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.fx-list{display:flex;flex-direction:column;gap:12px}
+.fx-month{border:1px solid var(--line);border-radius:10px;background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden}
+.fx-hd{display:flex;align-items:center;gap:10px;padding:10px 12px;
+  border-bottom:1px solid var(--line);background:var(--surface-2)}
+.fx-hd b{font-family:var(--disp);font-size:15px}
+.fx-badge{font-size:11px;padding:2px 8px;border-radius:999px;
+  background:var(--ok-soft);color:var(--ok);font-weight:700}
+.fx-badge.void{background:var(--crit-soft);color:var(--crit)}
+.fx-vers{display:flex;flex-direction:column}
+.fx-ver{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:8px 12px;font-size:12px;border-top:1px solid var(--line)}
+.fx-ver:first-child{border-top:0}
+.fx-ver .v{font-family:var(--mono);font-weight:700;min-width:2.2em}
+.fx-ver .at,.fx-ver .by{color:var(--muted);font-variant-numeric:tabular-nums}
+.fx-ver .nm{color:var(--accent);text-decoration:none;word-break:break-all}
+.fx-ver .note{flex-basis:100%;color:var(--ink-2);font-size:11.5px}
+.fx-ver .tag{font-size:11px;padding:1px 7px;border-radius:999px;
+  background:var(--crit-soft);color:var(--crit);font-weight:700}
+.fx-ver.void{opacity:.6}
+.fx-ver.void .nm{color:var(--muted);text-decoration:line-through}
+
 .lg-alerts{
   background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);
   border-radius:10px;padding:10px 13px;margin-bottom:14px;font-size:12px;line-height:1.7;
@@ -787,7 +834,7 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-week > h3 .pg{font-family:var(--mono);font-size:10.5px;font-weight:500}
 .lg-week > h3 .pg.right{margin-left:auto}
 
-/* 帳票は 1071px と幅が決まっている。枠を画面いっぱいに広げると
+/* 帳票は幅が決まっている(いまは1031px)。枠を画面いっぱいに広げると
    右側に大きな余白ができるので、中身に合わせて中央に置く */
 .lg-week{width:fit-content;max-width:100%;margin-left:auto;margin-right:auto}
 
@@ -850,15 +897,14 @@ table.pv td.st i.pend{
 
 /* ============================================================
    印刷
-   画面に出ている帳票を、そのまま紙に落とします。
+   記録簿に出ている帳票を、そのまま紙に落とします。
    サーバーを介さないので待ち時間がありません。
-   ドライブにPDFを残したいときは「PDFを出力」を使ってください。
+   ドライブにPDFを残したいときは「この月を確定」を使ってください。
    ============================================================ */
 @media print{
   /* 画面のための部品は紙に出さない */
-  .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
-  #boot,#demoBar,.footnote,.presets,.range,.pvnote,.pvscale,
-  .progress,.donebox,.actions,.jobbar{display:none !important}
+  .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-fix,.lg-note,.cols,.overlay,.toast,
+  #boot,#demoBar,.footnote,.actions,.jobbar,#viewExport,#viewStaff{display:none !important}
   body.jobbar-on{padding-bottom:0}
 
   body{background:#fff;padding:0}
@@ -871,7 +917,7 @@ table.pv td.st i.pend{
   .lg-week{page-break-after:always;break-after:page;margin:0;width:auto;max-width:none}
   .lg-week:last-child{page-break-after:auto;break-after:auto}
   .lg-week > h3{display:none}
-  .lg-sheet,.pvwrap{
+  .lg-sheet{
     border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important;
     width:auto;max-width:none;height:auto !important;margin:0;
   }
@@ -911,9 +957,12 @@ table.pv td.st i.pend{
 </head>
 <body>
 
-<div class="shell">
-
-  <div class="topbar">
+<!-- 画面の切り替え。
+     本文(.shell)の外に置いてあります。中に入れると、記録簿や確定簿を
+     出しているとき .shell が短くなり、少しスクロールしただけで
+     バーごと消えてしまうためです。ここなら常に上に貼り付いたままです。 -->
+<div class="topbar">
+  <div class="tb-in">
     <div class="brand">
       <b id="brandName">くるむ薬局</b>
       <span>業務日報</span>
@@ -937,7 +986,7 @@ table.pv td.st i.pend{
         </svg><span class="dot" id="navLedgerDot" hidden></span></span>
         <span class="cap">記録簿</span>
       </button>
-      <button class="navcircle" id="navExport" aria-pressed="false" title="帳票の出力">
+      <button class="navcircle" id="navExport" aria-pressed="false" title="確定簿">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M7 9V4h10v5"/>
           <rect x="4" y="9" width="16" height="7" rx="1.5"/>
@@ -946,7 +995,7 @@ table.pv td.st i.pend{
         <span class="cap">出力</span>
       </button>
       <span class="navsep"></span>
-      <button class="navcircle" id="btnAdmin" title="担当者の管理">
+      <button class="navcircle" id="btnAdmin" aria-pressed="false" title="名簿と管理薬剤師">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="9" cy="8" r="3.2"/>
           <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
@@ -956,6 +1005,9 @@ table.pv td.st i.pend{
       </button>
     </nav>
   </div>
+</div>
+
+<div class="shell">
 
   <div id="demoBar" class="demo" hidden>
     プレビュー表示中です。保存や名簿の変更はこの画面の中だけで、シートには書き込まれません。
@@ -1098,18 +1150,20 @@ table.pv td.st i.pend{
     <div class="sp"></div>
     <button class="toggle" id="lgEdit" aria-pressed="false">編集</button>
     <button class="btn ghost" id="lgPaper" title="この画面をそのまま印刷します（すぐ出ます）">印刷</button>
-    <button class="btn ghost" id="lgPrint" title="ドライブにPDFを保存します（1週あたり数秒）">PDFを出力</button>
+    <button class="btn primary" id="lgFix"
+      title="月が締まったらPDFに焼いて残します（月に1回）">この月を確定</button>
   </div>
 
   <div class="lg-stats" id="lgStats"></div>
   <div class="lg-alerts" id="lgAlerts" hidden></div>
+  <div class="lg-fix" id="lgFixBox" hidden></div>
   <div id="lgBody"><div class="skeleton"></div></div>
   <div id="lgFoot"></div>
 </section>
 
 <section class="lgview" id="viewExport" hidden>
   <div class="lg-bar">
-    <div class="ttl"><b>帳票の出力</b><span>期間を選んでPDFにします</span></div>
+    <div class="ttl"><b>確定簿</b><span>確定した月のPDF。監査ではここから開きます</span></div>
   </div>
   <div class="card"><div class="card-bd" id="pvBody"></div></div>
 </section>
@@ -1124,12 +1178,11 @@ table.pv td.st i.pend{
   </div>
 </div>
 
-<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
-  <div class="sheet">
-    <div class="sheet-hd">
-      <h2 id="sheetTitle">名簿と管理薬剤師</h2>
-      <button class="mini" id="sheetClose">閉じる</button>
-    </div>
+<section class="lgview narrow" id="viewStaff" hidden>
+  <div class="lg-bar">
+    <div class="ttl"><b>名簿と管理薬剤師</b><span>担当者の登録と、任期の管理</span></div>
+  </div>
+  <div class="card">
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="staff"  aria-selected="true">担当者</button>
       <button class="tab" role="tab" data-tab="chief"  aria-selected="false">管理薬剤師</button>
@@ -1137,18 +1190,14 @@ table.pv td.st i.pend{
     </div>
     <div class="sheet-bd" id="sheetBody"></div>
   </div>
-</div>
+</section>
 
-<!-- ============================================================
-     帳票の出力
-     期間を選び、帳票テンプレート経由でPDFにする画面。
-     ============================================================ -->
-<!-- 出力の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
+<!-- 確定の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
 <div class="jobbar" id="jobBar" hidden role="status" aria-live="polite">
   <div class="jb-in">
     <div class="jb-main">
       <div class="jb-head">
-        <b id="jobTitle">帳票の出力</b>
+        <b id="jobTitle">月次の確定</b>
         <span id="jobStep"></span>
       </div>
       <div class="jb-bar"><i id="jobFill"></i></div>
@@ -1222,7 +1271,8 @@ function fail(e){ toast((e && e.message) || 'サーバーとの通信に失敗�
 var VIEWS = {
   input:  { el:'main',       btn:'navInput'  },
   ledger: { el:'ledger',     btn:'navLedger' },
-  export: { el:'viewExport', btn:'navExport' }
+  export: { el:'viewExport', btn:'navExport' },
+  staff:  { el:'viewStaff',  btn:'btnAdmin'  }
 };
 var VIEW = '';
 
@@ -1231,6 +1281,16 @@ function showView(name){
   if (!canLeaveView_(VIEW)) return;
   setView_(name);
 }
+
+/* 記録簿や名簿の中のバーは、トップバーの真下に貼り付けたい。
+   高さは書体や画面幅で変わるので、決め打ちにせず測って渡す。 */
+function syncTopbarHeight_(){
+  var bar = document.querySelector('.topbar');
+  if (!bar) return;
+  var h = bar.offsetHeight;
+  if (h) document.documentElement.style.setProperty('--tbh', h + 'px');
+}
+window.addEventListener('resize', syncTopbarHeight_);
 
 function setView_(name){
   var prev = VIEW;
@@ -1241,6 +1301,7 @@ function setView_(name){
       .setAttribute('aria-pressed', k === name ? 'true' : 'false');
   });
   window.scrollTo(0, 0);
+  syncTopbarHeight_();
   enterView_(name, prev);
 }
 
@@ -1275,7 +1336,9 @@ function enterView_(name, prev){
   } else if (name === 'ledger'){
     lgOpen();
   } else if (name === 'export'){
-    openPrint();
+    openFix();
+  } else if (name === 'staff'){
+    loadMaster();
   }
   lgBar();
 }
@@ -1294,6 +1357,7 @@ function boot(){
     renderIdentity();
     apply(d);
     document.getElementById('boot').hidden = true;
+    syncTopbarHeight_();
     setView_('input');
     scanMissing();
   });
@@ -1534,7 +1598,8 @@ function valSummary(d, future){
        + '<b class="' + cls('roomHumid') + '">' + fmt(d.roomHumid,0) + '</b> · '
        + '冷<b class="' + cls('coldTemp') + '">' + fmt(d.coldTemp,1) + '</b>/'
        + '<b class="' + cls('coldHumid') + '">' + fmt(d.coldHumid,0) + '</b>'
-       + (d.xDrug ? ' · <b>譲渡</b>' : '');
+       + ((d.xfers && d.xfers.length) ? ' · <b>譲渡' + d.xfers.length + '</b>' : '')
+       + (d.note ? ' · <b>事項</b>' : '');
 }
 
 function stateChip(d, future){
@@ -1592,7 +1657,7 @@ function renderForm(){
     checkRange(f);
   });
 
-  renderXfer_(d, ro);
+  renderNoteXfer_(d, ro);
 
   // 押印欄。管理者印は、その日の管理薬剤師が誰だったかを常に示す
   seal('sealStaff', d.staff, d.savedAt);
@@ -1662,58 +1727,164 @@ function release_(date){
   call('releaseDay', [{ date:date, staff:S.me }], function(){}, function(){});
 }
 
-/* 管理に関する事項(譲渡記録)。
-   譲渡があった日だけ書く欄なので、既定は閉じておき、
-   「記載あり」を押したときだけ入力欄を出します。 */
-function renderXfer_(d, ro){
-  var has = XFER.some(function(f){ return d[f.key]; });
-  if (S.xferOpen === undefined || S.xferDate !== d.date){
-    S.xferOpen = has;
-    S.xferDate = d.date;
+/* ============================================================
+   管理に関する事項 と 譲渡・譲受記録
+
+   帳票では別の欄です。ひとまとめにしてはいけません。
+
+     管理に関する事項 … 上段F列。その日の特記事項。自由記述。1日1つ
+     譲渡・譲受記録   … 下段(B〜L結合)。医薬品を渡した／受けた記録。
+                        1日に何件でも入り、下段に1件ずつ並びます。
+   ============================================================ */
+
+/** 譲渡記録1件を、帳票に出るのと同じ1行の文字列にする */
+function xLine_(x){
+  return XFER.map(function(f){ return String((x && x[f.key]) || '').trim(); })
+             .filter(function(v){ return v; }).join('／');
+}
+
+/** その日の譲渡記録を、帳票の下段に出る行の配列にする */
+function xLines_(v){
+  return ((v && v.xfers) || []).map(xLine_).filter(function(t){ return t; });
+}
+
+function xBlank_(){
+  var o = {};
+  XFER.forEach(function(f){ o[f.key] = ''; });
+  return o;
+}
+
+/** 中身が1つでも入っている記録だけ残す */
+function xClean_(list){
+  return (list || []).filter(function(x){
+    return XFER.some(function(f){ return String(x[f.key] || '').trim(); });
+  }).map(function(x){
+    var o = {};
+    XFER.forEach(function(f){ o[f.key] = String(x[f.key] || '').trim(); });
+    return o;
+  });
+}
+
+function renderNoteXfer_(d, ro){
+  // 日が変わったら、その日の記録を読み直す
+  if (S.xDate !== d.date){
+    S.xDate = d.date;
+    S.xlist = (d.xfers || []).map(function(x){ return Object.assign({}, x); });
   }
 
-  var body = XFER.map(function(f){
-    var v = d[f.key] == null ? '' : String(d[f.key]);
-    var input;
-    if (f.type === 'select'){
-      input = '<select id="in_'+f.key+'"'+(ro?' disabled':'')+'>'
-            + '<option value=""></option>'
-            + f.choices.map(function(c){
-                return '<option'+(c===v?' selected':'')+'>'+esc(c)+'</option>'; }).join('')
-            + '</select>';
-    } else {
-      input = '<div class="inputwrap"><input id="in_'+f.key+'" type="'
-            + (f.type === 'month' ? 'month' : 'text') + '" value="'+esc(v)+'"'
-            + (ro?' disabled':'') + '></div>';
-    }
-    return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
-      + '<label for="in_'+f.key+'">'+esc(f.label)+'</label>' + input + '</div>';
-  }).join('');
-
   document.getElementById('xfer').innerHTML =
-      '<div class="xfer-hd">'
-    +   '<h3>管理に関する事項</h3>'
-    +   '<button class="toggle" id="xferToggle" aria-pressed="'+(S.xferOpen?'true':'false')+'"'
-    +     (ro?' disabled':'') + '>' + (S.xferOpen ? '記載あり' : '記載なし') + '</button>'
-    +   '<div class="xfer-note">医薬品の譲渡・譲受があった日だけ記入します。'
-    +     '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</div>'
+      '<div class="field txt wide">'
+    +   '<label for="in_note">管理に関する事項</label>'
+    +   '<textarea id="in_note" rows="3"' + (ro ? ' disabled' : '')
+    +     ' placeholder="例：調剤台の照度を測定。基準内。">' + esc(d.note || '') + '</textarea>'
+    +   '<div class="hint">その日の特記事項を書きます（設備の点検、事故や苦情、研修など）。'
+    +     '帳票の上段「管理に関する事項」の欄にそのまま入ります。</div>'
     + '</div>'
-    + '<div class="xfer-body" id="xferBody"' + (S.xferOpen ? '' : ' hidden') + '>' + body + '</div>';
+    + '<div class="xfer">'
+    +   '<div class="xfer-hd">'
+    +     '<h3>譲渡・譲受記録</h3>'
+    +     '<span class="xcount" id="xCount"></span>'
+    +     '<button class="mini" id="xAdd"' + (ro ? ' disabled' : '') + '>＋ 記録を追加</button>'
+    +     '<div class="xfer-note">医薬品を渡した／受けた日だけ記入します。'
+    +       '<b style="display:inline">1日に何件でも</b>入り、帳票の下段に1件ずつ並びます。'
+    +       '管理に関する事項とは別の欄です。</div>'
+    +   '</div>'
+    +   '<div id="xList"></div>'
+    + '</div>';
 
-  var btn = document.getElementById('xferToggle');
-  if (btn) btn.addEventListener('click', function(){
-    S.xferOpen = !S.xferOpen;
-    btn.setAttribute('aria-pressed', S.xferOpen ? 'true' : 'false');
-    btn.textContent = S.xferOpen ? '記載あり' : '記載なし';
-    document.getElementById('xferBody').hidden = !S.xferOpen;
-    if (S.xferOpen) claimOnce_();
+  var note = document.getElementById('in_note');
+  note.addEventListener('input', function(){
+    S.dirty = true;
+    if (!S.me) needStaff(false); else claimOnce_();
   });
 
-  XFER.forEach(function(f){
-    var el = document.getElementById('in_'+f.key);
-    if (el) el.addEventListener('input', function(){
+  var add = document.getElementById('xAdd');
+  if (add) add.addEventListener('click', function(){
+    xSync_();
+    S.xlist.push(xBlank_());
+    S.dirty = true;
+    xRender_(ro);
+    var el = document.getElementById('x' + (S.xlist.length - 1) + '_xKind');
+    if (el) el.focus();
+    if (!S.me) needStaff(false); else claimOnce_();
+  });
+
+  xRender_(ro);
+}
+
+/** 入力欄の中身を S.xlist に写す(足す・消すで作り直す前に呼ぶ) */
+function xSync_(){
+  (S.xlist || []).forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('x' + i + '_' + f.key);
+      if (el) x[f.key] = el.value;
+    });
+  });
+}
+
+/** いま画面に出ている譲渡記録を、送れる形で取り出す */
+function xCollect_(){
+  xSync_();
+  return xClean_(S.xlist || []);
+}
+
+function xRender_(ro){
+  var box = document.getElementById('xList');
+  if (!box) return;
+  var list = S.xlist || [];
+
+  document.getElementById('xCount').textContent = list.length ? list.length + ' 件' : '';
+
+  if (!list.length){
+    box.innerHTML = '<div class="xnone">この日は譲渡・譲受はありません。'
+      + 'あった場合は［＋ 記録を追加］を押してください。</div>';
+    return;
+  }
+
+  box.innerHTML = list.map(function(x, i){
+    return '<div class="xrec" data-i="' + i + '">'
+      + '<div class="xrec-hd"><b>' + (i + 1) + ' 件目</b><div class="sp"></div>'
+      +   (ro ? '' : '<button class="mini danger" data-xdel="' + i + '">この記録を消す</button>')
+      + '</div>'
+      + '<div class="xfer-body">'
+      + XFER.map(function(f){
+          var id = 'x' + i + '_' + f.key;
+          var v = String(x[f.key] || '');
+          var input;
+          if (f.type === 'select'){
+            input = '<select id="' + id + '"' + (ro ? ' disabled' : '') + '>'
+                  + '<option value=""></option>'
+                  + f.choices.map(function(c){
+                      return '<option' + (c === v ? ' selected' : '') + '>' + esc(c) + '</option>';
+                    }).join('') + '</select>';
+          } else {
+            input = '<div class="inputwrap"><input id="' + id + '" type="'
+                  + (f.type === 'month' ? 'month' : 'text') + '" value="' + esc(v) + '"'
+                  + (ro ? ' disabled' : '') + '></div>';
+          }
+          return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+               + '<label for="' + id + '">' + esc(f.label) + '</label>' + input + '</div>';
+        }).join('')
+      + '</div></div>';
+  }).join('');
+
+  Array.prototype.forEach.call(box.querySelectorAll('[data-xdel]'), function(b){
+    b.addEventListener('click', function(){
+      var i = Number(b.getAttribute('data-xdel'));
+      xSync_();
+      S.xlist.splice(i, 1);
       S.dirty = true;
-      if (!S.me) needStaff(false); else claimOnce_();
+      xRender_(ro);
+    });
+  });
+
+  list.forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('x' + i + '_' + f.key);
+      if (el) el.addEventListener('input', function(){
+        S.dirty = true;
+        if (!S.me) needStaff(false); else claimOnce_();
+      });
     });
   });
 }
@@ -1756,20 +1927,29 @@ function sealAdmin_(d){
 /* 入力欄の中身を控える／戻す。
    担当者を選び直したときにフォームを作り直すので、その前後で使う */
 function formSnapshot_(){
-  var snap = {};
-  FIELDS.concat(XFER).forEach(function(f){
+  var snap = { _note: '', _xfers: null };
+  FIELDS.forEach(function(f){
     var el = document.getElementById('in_' + f.key);
     if (el) snap[f.key] = el.value;
   });
+  var n = document.getElementById('in_note');
+  if (n) snap._note = n.value;
+  snap._xfers = xCollect_();
   return snap;
 }
 function formRestore_(snap){
   if (!snap) return;
   Object.keys(snap).forEach(function(k){
-    if (snap[k] === '') return;
+    if (k.charAt(0) === '_' || snap[k] === '') return;
     var el = document.getElementById('in_' + k);
     if (el && !el.disabled) el.value = snap[k];
   });
+  var n = document.getElementById('in_note');
+  if (n && !n.disabled && snap._note) n.value = snap._note;
+  if (snap._xfers && snap._xfers.length){
+    S.xlist = snap._xfers;
+    xRender_(false);
+  }
   FIELDS.forEach(function(f){
     if (document.getElementById('in_' + f.key)) checkRange(f);
   });
@@ -1806,20 +1986,21 @@ document.getElementById('btnSave').addEventListener('click', function(){
 
   if (missing.length){ toast(missing.join('・') + ' を入力してください', true); return; }
 
-  // 管理に関する事項。「記載あり」のときだけ送り、最低限の項目は必須にする
-  XFER.forEach(function(f){ payload[f.key] = ''; });
-  if (S.xferOpen){
+  // 管理に関する事項(帳票 上段F)と、譲渡・譲受記録(帳票 下段)。別々に送る
+  var noteEl = document.getElementById('in_note');
+  payload.note = noteEl ? String(noteEl.value).trim() : '';
+
+  payload.xfers = xCollect_();
+  var bad = [];
+  payload.xfers.forEach(function(x, i){
     var lack = [];
-    XFER.forEach(function(f){
-      var el = document.getElementById('in_'+f.key);
-      payload[f.key] = el ? String(el.value).trim() : '';
-    });
-    if (!payload.xKind) lack.push('譲渡区分');
-    if (!payload.xDrug) lack.push('医薬品名称');
-    if (lack.length){
-      toast('管理に関する事項の ' + lack.join('・') + ' を入力してください', true);
-      return;
-    }
+    if (!x.xKind) lack.push('譲渡区分');
+    if (!x.xDrug) lack.push('医薬品名称');
+    if (lack.length) bad.push((i + 1) + '件目の ' + lack.join('・'));
+  });
+  if (bad.length){
+    toast('譲渡・譲受記録：' + bad.join('、') + ' を入力してください', true);
+    return;
   }
 
   // 逸脱値も記録できなければ意味がないので、止めずに確認だけする
@@ -1937,14 +2118,7 @@ window.addEventListener('beforeunload', function(e){
    名簿と管理薬剤師の管理
    ============================================================ */
 var A = { master:null, tab:'staff' };
-var $overlay = document.getElementById('overlay');
 
-document.getElementById('btnAdmin').addEventListener('click', openAdmin);
-document.getElementById('sheetClose').addEventListener('click', closeAdmin);
-$overlay.addEventListener('click', function(e){ if (e.target === this) closeAdmin(); });
-document.addEventListener('keydown', function(e){
-  if (e.key === 'Escape' && $overlay.classList.contains('open')) closeAdmin();
-});
 Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(btn){
   btn.addEventListener('click', function(){
     A.tab = btn.getAttribute('data-tab');
@@ -1955,8 +2129,6 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(btn){
   });
 });
 
-function openAdmin(){ $overlay.classList.add('open'); loadMaster(); }
-function closeAdmin(){ $overlay.classList.remove('open'); }
 function sheet(html){ document.getElementById('sheetBody').innerHTML = html; }
 
 function loadMaster(){
@@ -1977,10 +2149,12 @@ function renderStaffTab(){
   A.master.terms.forEach(function(t){ chiefNames[t.name] = true; });
 
   var rows = A.master.staff.map(function(s){
-    return '<div class="mrow' + (s.active ? '' : ' retired') + '" data-id="' + s.id + '">'
+    return '<div class="mrow' + (s.active ? '' : ' off') + '" data-id="' + s.id + '">'
       + '<span class="mn">' + esc(s.name) + '</span>'
+      + (s.active ? '' : '<span class="chip off">在籍なし</span>')
       + sealBtn_(s)
-      + '<button class="mini" data-act="active">' + (s.active ? '退職にする' : '復帰させる') + '</button>'
+      + '<button class="mini" data-act="active">'
+      + (s.active ? '在籍から外す' : '在籍に戻す') + '</button>'
       + (s.records === 0 && !chiefNames[s.name]
           ? '<button class="mini danger" data-act="delete">削除</button>' : '')
       + '<span class="cnt">' + (s.records === 0
@@ -1995,9 +2169,11 @@ function renderStaffTab(){
     +   '<button class="mini on" id="addGo">追加</button>'
     + '</div>'
     + '<div class="note-block">'
-    +   '<b>退職と削除の違い</b>'
-    +   '日報や管理薬剤師の履歴に名前が残っている人は、削除ではなく退職にしてください。'
-    +   '退職にすると担当のプルダウンからは消えますが、過去の記録に押された名前はそのまま残ります。'
+    +   '<b>「在籍から外す」と「削除」の違い</b>'
+    +   '日報や管理薬剤師の履歴に名前が残っている人は、削除ではなく在籍から外してください。'
+    +   '在籍から外すと担当のプルダウンには出なくなりますが、'
+    +   '過去の記録に押された名前はそのまま残ります。退職だけでなく、異動や休職で'
+    +   'しばらく入らないときにも使えます。戻ってきたら「在籍に戻す」で元どおりです。'
     + '</div>');
 
   Array.prototype.forEach.call(document.querySelectorAll('.mrow .sealbtn'), function(btn){
@@ -2014,9 +2190,10 @@ function renderStaffTab(){
         if (!confirm(rec.name + ' さんを名簿から削除します。よろしいですか？')) return;
         masterCall('removeStaff', { id:id, actor:S.me }, rec.name + ' さんを削除しました');
       } else {
-        if (rec.active && !confirm(rec.name + ' さんを退職にします。\n過去の記録はそのまま残ります。')) return;
+        if (rec.active && !confirm(rec.name + ' さんを在籍から外します。\n'
+          + '担当のプルダウンに出なくなります。\n過去の記録に押された名前はそのまま残ります。')) return;
         masterCall('updateStaff', { id:id, active:!rec.active, actor:S.me },
-          rec.name + ' さんを' + (rec.active ? '退職にしました' : '復帰させました'));
+          rec.name + ' さんを' + (rec.active ? '在籍から外しました' : '在籍に戻しました'));
       }
     });
   });
@@ -2283,7 +2460,7 @@ function masterCall(fn, arg, okMsg){
       S.staff = d.staff;
       S.terms = d.terms || [];
       var names = activeStaff().map(function(s){ return s.name; });
-      if (names.indexOf(S.me) < 0) S.me = '';   // 退職などで消えたら空欄に戻す
+      if (names.indexOf(S.me) < 0) S.me = '';   // 在籍から外れて消えたら空欄に戻す
       renderIdentity();
       apply(d);
     });
@@ -2316,179 +2493,191 @@ function daysSince(iso){
 /* ============================================================
    帳票の出力
    ============================================================ */
-/* 出力画面の状態。出力ジョブそのものは JOB が持ちます
-   (記録簿から始めても出力画面から始めても同じものなので) */
-var P = { from:'', to:'', preview:null, stale:false };
+/* 確定簿の状態。出力ジョブそのものは JOB が持ちます
+   (記録簿から確定しても、ここから作り直しても同じものなので) */
+var FIX = { data:null };
 
 /* 表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します */
-function openPrint(){
-  if (!P.from){
-    P.from = S.week.weekStart || S.week.days[0].date;
-    P.to   = S.week.days[6].date;
-  }
-  loadPreview();
-}
+function openFix(){ loadFix(); }
 
-function loadPreview(){
+function loadFix(){
   document.getElementById('pvBody').innerHTML = '<div class="skeleton"></div>';
-  call('getPrintPreview', [P.from], function(d){ P.preview = d; renderPrint(); });
+  call('getFixList', [], function(d){ FIX.data = d; renderFix(); });
 }
 
-function renderPrint(){
-  var d = P.preview;
+/* 確定済みのPDFを月ごとに並べる。
+   監査で「去年の8月を見せて」と言われたときに、ここから開きます。
+   直近の版を大きく出し、古い版と取り消した版はその下に小さく残します
+   (「いつ何を直したか」が見えることが、この画面のいちばんの役目です) */
+function renderFix(){
+  var d = FIX.data;
   var h = '';
 
-  if (!d.hasTemplate){
-    h += '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
-       + 'スクリプトエディタで <code>buildTemplate</code> を1回実行してください。'
-       + '実行すると「帳票テンプレート」シートが作られ、ここから出力できるようになります。'
-       + '</div></div>';
-  }
-
-  h += '<div class="presets">'
-    +   preset('今週','thisWeek') + preset('先週','lastWeek')
-    +   preset('今月','thisMonth') + preset('前月','lastMonth')
-    + '</div>'
-    + '<div class="range">'
-    +   '<input type="date" id="pvFrom" value="' + P.from + '">'
-    +   '<span class="tilde">〜</span>'
-    +   '<input type="date" id="pvTo" value="' + P.to + '">'
-    +   '<button class="mini" id="pvShow" title="この期間で見え方を作り直します">表示</button>'
-    + '</div>';
-
-  var weeks = weekCount_(P.from, P.to);
-  h += '<p class="pvnote" id="pvNote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
-     + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
-
-  h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
-     + '<p class="pvscale" id="pvScale"></p>'
-     + '<div class="actions">'
-     +   '<button class="btn primary" id="pvGo"' + (d.hasTemplate ? '' : ' disabled') + '>'
-     +     'この期間をPDFにする</button>'
-     +   '<button class="btn ghost" id="pvPaper">この週をそのまま印刷</button>'
-     + '</div>';
-
-  document.getElementById('pvBody').innerHTML = h;
-  wirePrint_();
-  fitPreview_();
-}
-
-/* 帳票は列幅の合計が1000pxを超えるので、画面によっては入りきりません。
-   はみ出す分だけ縮めて、1週間の全体が一目で分かるようにします。
-   縮めたときは、その倍率を下に出します(刷るのは常に原寸) */
-function fitPreview_(){
-  var wrap = document.getElementById('pvWrap');
-  var note = document.getElementById('pvScale');
-  if (!wrap) return;
-  var tbl = wrap.querySelector('table.pv');
-  if (!tbl) return;
-
-  // いったん元に戻してから測る
-  wrap.classList.remove('fit');
-  wrap.style.height = '';
-  tbl.style.transform = '';
-  if (note) note.textContent = '';
-
-  var avail = wrap.clientWidth - 20;      // .pvwrap の内側の余白ぶん
-  var w = tbl.offsetWidth;
-  if (!w || !avail || w <= avail) return; // 収まっているならそのまま
-
-  var k = avail / w;
-  tbl.style.transform = 'scale(' + k.toFixed(4) + ')';
-  wrap.style.height = Math.ceil(tbl.offsetHeight * k) + 'px';
-  wrap.classList.add('fit');
-  if (note){
-    note.textContent = '画面の幅に合わせて ' + Math.round(k * 100) + '% で表示しています。'
-      + '印刷・PDFは原寸です。';
-  }
-}
-
-window.addEventListener('resize', function(){
-  if (VIEW === 'export') fitPreview_();
-});
-
-/* 印刷と出力の実装は「出力」の節にまとめてあります(下の方) */
-
-function preset(label, key){
-  return '<button class="mini" data-preset="' + key + '">' + label + '</button>';
-}
-
-function wirePrint_(){
-  Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'), function(b){
-    b.addEventListener('click', function(){
-      applyPreset_(b.getAttribute('data-preset'));
-      P.stale = false;      // 開始日と最終日が一度に決まるので、そのまま作り直す
-      loadPreview();
-    });
-  });
-  // 日付を選ぶたびに作り直すと、開始日を選んだ時点でも一度生成してしまう。
-  // ここでは値を控えるだけにして、「表示」を押されたときに作り直す。
-  ['pvFrom','pvTo'].forEach(function(id){
-    var el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener('change', function(){
-      P.from = document.getElementById('pvFrom').value;
-      P.to   = document.getElementById('pvTo').value;
-      if (P.from && P.to && P.from > P.to){
-        P.to = P.from;
-        document.getElementById('pvTo').value = P.to;
-      }
-      pvRangeChanged_();
-    });
-  });
-  var show = document.getElementById('pvShow');
-  if (show) show.addEventListener('click', function(){
-    if (!P.from || !P.to){ toast('開始日と最終日を選んでください', true); return; }
-    P.stale = false;
-    loadPreview();
-  });
-  var paper = document.getElementById('pvPaper');
-  if (paper) paper.addEventListener('click', function(){ printPaper_('export'); });
-  var go = document.getElementById('pvGo');
-  if (go) go.addEventListener('click', startPrint_);
-}
-
-/* 期間を変えたときは、週数の表示だけを更新する。
-   見え方の作り直し(サーバー往復)は「表示」を押されるまで待つ。 */
-function pvRangeChanged_(){
-  P.stale = true;
-  var ok   = !!(P.from && P.to);
-  var note = document.getElementById('pvNote');
-  var show = document.getElementById('pvShow');
-  var go   = document.getElementById('pvGo');
-
-  if (show){ show.disabled = !ok; show.classList.toggle('on', ok); }
-  if (go) go.disabled = !ok;
-  if (!note) return;
-
-  if (!ok){
-    note.textContent = '開始日と最終日を選んでください。';
+  if (!d.months.length){
+    h = '<div class="blockmsg"><div><b>確定した月はまだありません</b>'
+      + '記録簿を開いて、月のすべての日が承認されると［この月を確定する］が押せます。'
+      + '確定するとPDFがドライブに残り、ここに並びます。</div></div>';
+    document.getElementById('pvBody').innerHTML = h;
     return;
   }
-  var weeks = weekCount_(P.from, P.to);
-  note.innerHTML = jp(P.from) + ' 〜 ' + jp(P.to) + ' ＝ ' + weeks + ' 週分 / '
-    + weeks + ' ページ。'
-    + '<b style="display:inline">［表示］を押すと、この期間の見え方を作り直します。</b>'
-    + '（出力は押さなくても、この期間で行われます）';
+
+  h += '<p class="fx-lead">確定した月のPDFです。'
+     + '記録を直したいときは、記録簿で承認を解除して直し、もう一度確定してください。'
+     + '前の版は消さずに残ります。<br>'
+     + '確定したときのSHA-256を台帳に残しているので、'
+     + '中身が変わっていないかをあとから確かめられます。</p>';
+
+  h += fxTools_(d);
+
+  h += '<div class="fx-list">' + d.months.map(function(m){
+    var cur = m.latest;
+    return '<div class="fx-month">'
+      + '<div class="fx-hd">'
+      +   '<b>' + esc(m.label) + '</b>'
+      +   (cur ? '<span class="fx-badge">第' + cur.version + '版</span>'
+              : '<span class="fx-badge void">有効な版がありません</span>')
+      +   '<div class="sp"></div>'
+      +   (cur ? '<a class="btn primary" href="' + esc(cur.url) + '" target="_blank"'
+              + ' rel="noopener">PDFを開く</a>' : '')
+      + '</div>'
+      + '<div class="fx-vers">' + m.versions.map(fxVer_).join('') + '</div>'
+      + '</div>';
+  }).join('') + '</div>';
+
+  document.getElementById('pvBody').innerHTML = h;
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-void]'), function(b){
+    b.addEventListener('click', function(){ fxVoid(b.getAttribute('data-void')); });
+  });
+  var zip = document.getElementById('fxZip');
+  if (zip) zip.addEventListener('click', fxBundle);
+  var ver = document.getElementById('fxVerify');
+  if (ver) ver.addEventListener('click', fxVerify);
 }
 
-function applyPreset_(key){
-  var t = S.week.today, p = t.split('-');
-  var d = new Date(+p[0], +p[1]-1, +p[2]);
-  var iso = function(x){
-    return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0')
-         + '-' + String(x.getDate()).padStart(2,'0');
+/* 確定簿の上に置く道具。
+   ・まとめて渡す … 確定済みのPDFをそのままZIPにする（作り直さないのですぐ終わる）
+   ・証跡を確認   … 記録したSHA-256と、いまのDrive上のPDFを突き合わせる */
+function fxTools_(d){
+  var opt = function(sel){
+    return d.months.map(function(m){
+      return '<option value="' + m.month + '"' + (m.month === sel ? ' selected' : '') + '>'
+        + esc(m.label) + '</option>';
+    }).join('');
   };
-  if (key === 'thisWeek'){ P.from = S.week.weekStart; P.to = addDays(P.from, 6); }
-  else if (key === 'lastWeek'){ P.from = addDays(S.week.weekStart, -7); P.to = addDays(P.from, 6); }
-  else if (key === 'thisMonth'){
-    P.from = iso(new Date(d.getFullYear(), d.getMonth(), 1));
-    P.to   = iso(new Date(d.getFullYear(), d.getMonth()+1, 0));
-  } else {
-    P.from = iso(new Date(d.getFullYear(), d.getMonth()-1, 1));
-    P.to   = iso(new Date(d.getFullYear(), d.getMonth(), 0));
-  }
+  var oldest = d.months[d.months.length - 1].month;
+  var newest = d.months[0].month;
+
+  return '<div class="fx-tools">'
+    + '<div class="fx-tool">'
+    +   '<b>まとめて渡す</b>'
+    +   '<select id="fxFrom">' + opt(oldest) + '</select>'
+    +   '<span class="tilde">〜</span>'
+    +   '<select id="fxTo">' + opt(newest) + '</select>'
+    +   '<button class="mini on" id="fxZip">ZIPにする</button>'
+    +   '<span class="hint">各月の「取り消していない最新版」を、確定したときのまま集めます。'
+    +     'PDFを1つに結合しないのは、結合すると別のファイルになり、'
+    +     '台帳のハッシュと一致しなくなるためです。'
+    +     'ZIPにはSHA-256を書いた目録が入ります。</span>'
+    + '</div>'
+    + '<div class="fx-tool">'
+    +   '<b>証跡を確認</b>'
+    +   '<button class="mini" id="fxVerify">いま確かめる</button>'
+    +   '<span class="hint">確定したときのSHA-256と、いまのPDFを突き合わせます。'
+    +     '台帳そのものが書き換えられていないかも、前後の行のつながり（連鎖）で確かめます。</span>'
+    + '</div>'
+    + '<div class="fx-report" id="fxReport" hidden></div>'
+    + '</div>';
 }
+
+/** 期間ぶんの確定PDFを1つのZIPにまとめる */
+function fxBundle(){
+  var from = document.getElementById('fxFrom').value;
+  var to   = document.getElementById('fxTo').value;
+  if (from > to){ toast('開始の月が終わりの月より後になっています', true); return; }
+
+  var btn = document.getElementById('fxZip');
+  btn.disabled = true;
+  btn.textContent = 'まとめています…';
+  call('bundleFixes', [{ from:from, to:to, actor:S.me }], function(r){
+    btn.disabled = false;
+    btn.textContent = 'ZIPにする';
+    var box = document.getElementById('fxReport');
+    box.hidden = false;
+    box.className = 'fx-report';
+    box.innerHTML = '<b>' + esc(r.name) + '</b>（' + r.months + 'か月）'
+      + '<a href="' + esc(r.url) + '" target="_blank" rel="noopener">ドライブで開く</a>'
+      + '<div class="fx-rep-list">' + r.items.map(function(x){
+          return '<div>' + esc(x.month) + ' 第' + x.version + '版　'
+            + '<code>' + esc((x.hash || '').slice(0, 16)) + '…</code></div>';
+        }).join('') + '</div>';
+    toast('ZIPにまとめました');
+  }, function(e){
+    btn.disabled = false;
+    btn.textContent = 'ZIPにする';
+    fail(e);
+  });
+}
+
+/** 確定PDFが確定時のままかを確かめる */
+function fxVerify(){
+  var btn = document.getElementById('fxVerify');
+  btn.disabled = true;
+  btn.textContent = '確かめています…';
+  call('verifyFixes', [], function(r){
+    btn.disabled = false;
+    btn.textContent = 'いま確かめる';
+    var LB = { ok:'確定時のまま', none:'ハッシュなし',
+               missing:'PDFが見つからない', changed:'中身が変わっている',
+               broken:'台帳が書き換えられている' };
+    var box = document.getElementById('fxReport');
+    box.hidden = false;
+    box.className = 'fx-report ' + (r.bad ? 'bad' : 'good');
+    box.innerHTML = '<b>' + (r.bad
+        ? '★ ' + r.bad + ' 件に問題があります'
+        : r.total + ' 件すべて確定時のままです') + '</b>'
+      + '<div class="fx-rep-list">' + r.items.map(function(x){
+          return '<div class="' + (x.state === 'ok' ? '' : 'bad') + '">'
+            + esc(x.month) + ' 第' + x.version + '版' + (x.alive ? '' : '（取消）')
+            + '　' + LB[x.state] + (x.detail ? '　' + esc(x.detail) : '')
+            + '</div>';
+        }).join('') + '</div>';
+  }, function(e){
+    btn.disabled = false;
+    btn.textContent = 'いま確かめる';
+    fail(e);
+  });
+}
+
+function fxVer_(v){
+  return '<div class="fx-ver' + (v.alive ? '' : ' void') + '">'
+    + '<span class="v">v' + v.version + '</span>'
+    + '<span class="at">' + esc(v.at) + '</span>'
+    + '<span class="by">' + esc(v.by || '—') + '</span>'
+    + '<a class="nm" href="' + esc(v.url) + '" target="_blank" rel="noopener">'
+    +   esc(v.name) + '</a>'
+    + (v.hash ? '<span class="hash">' + esc(v.hash.slice(0, 16)) + '…</span>' : '')
+    + (v.note ? '<span class="note">' + esc(v.note) + '</span>' : '')
+    + (v.alive ? '<button class="mini" data-void="' + esc(v.id) + '">取り消す</button>'
+               : '<span class="tag">取消</span>')
+    + '</div>';
+}
+
+/* 誤って確定した版を取り消す。ファイルもDriveの記録も消しません。
+   消してしまうと「間違えて出した」という事実まで消えてしまうためです。 */
+function fxVoid(id){
+  var why = prompt('この版を取り消します。\n'
+    + 'PDFそのものは消えません。台帳に「取消」として残り、理由が記録されます。\n\n'
+    + '理由を書いてください。', '');
+  if (why === null) return;
+  if (!String(why).trim()){ toast('理由を書いてください', true); return; }
+  call('voidFix', [{ id:id, reason:why, actor:S.me }], function(d){
+    FIX.data = d; renderFix(); toast('取り消しました');
+    if (LG.data) lgOpen(LG.data.monthStart);
+  }, fail);
+}
+
+/* 印刷と確定の実装は「出力」の節にまとめてあります(下の方) */
 
 /* 何週になるか(帳票は週単位なので、端の週はまるごと1ページ) */
 function weekCount_(from, to){
@@ -2526,76 +2715,20 @@ function pvHead_(L){
     + '</tr></thead>';
 }
 
-function printTable_(d){
-  var L = d.layout;
-  if (!L) return '<div class="logempty">テンプレートが読めませんでした。</div>';
-
-  var R = d.ranges;
-  var C = L.col;
-  var px = function(v){ return Math.round(v) + 'px'; };
-
-  var head = pvHead_(L);
-
-  // 未記入の日はテンプレートの下地(℃　/ と %)をそのまま出す
-  var cell = function(v, r, unit, dec){
-    if (v === null || v === undefined) return '<td class="e">' + esc(unit) + '</td>';
-    var ng = r && (v < r[0] || v > r[1]);
-    return '<td class="e' + (ng ? ' ng' : '') + '">'
-         + Number(v).toFixed(dec) + esc(unit) + '</td>';
-  };
-  var stamp = function(name){
-    if (!name) return '<td class="st"></td>';
-    var u = d.seals[name];
-    return '<td class="st">' + (u ? '<img src="' + u + '" alt="">' : '')
-         + '<span>' + esc(name) + '</span></td>';
-  };
-  var blank = function(n){
-    var out = '';
-    for (var i = 0; i < n; i++) out += '<td></td>';
-    return out;
-  };
-
-  var body = d.rows.map(function(r, i){
-    var hUp = L.heights[L.headRows + i * L.rowsPerDay];
-    var hLo = L.heights[L.headRows + i * L.rowsPerDay + 1];
-    return '<tr style="height:' + px(hUp) + '">'
-      + '<td class="dt" rowspan="' + L.rowsPerDay + '">' + r.date.replace(/-/g,'/')
-      +   '<b>' + r.dow + '</b>' + esc(r.hours) + '</td>'
-      + '<td class="n">' + (r.filled && r.rx !== null ? r.rx : '') + '</td>'
-      + '<td class="u">' + esc(L.unitRx) + '</td>'
-      + '<td class="n">' + (r.filled && r.inquiry !== null ? r.inquiry : '') + '</td>'
-      + '<td class="u">' + esc(L.unitInq) + '</td>'
-      + blank(C.ROOM_T - C.INQ - 2)          // 単位とG列の間にある列(F列など)
-      + cell(r.roomTemp, R.ROOM_TEMP,  L.phTemp,  1)
-      + cell(r.roomHumid, R.ROOM_HUMID, L.phHumid, 0)
-      + cell(r.coldTemp, R.COLD_TEMP,  L.phTemp,  1)
-      + cell(r.coldHumid, R.COLD_HUMID, L.phHumid, 0)
-      // 押印欄の並びは設定に従う(担当者印と管理者印を入れ替えても崩れない)
-      + (C.STAFF < C.ADMIN ? stamp(r.staff) + stamp(r.admin)
-                           : stamp(r.admin) + stamp(r.staff))
-      + '</tr>'
-      + '<tr style="height:' + px(hLo) + '">'
-      +   '<td class="nt" colspan="' + (L.cols - C.NOTE + 1) + '">' + esc(r.note) + '</td>'
-      + '</tr>';
-  }).join('');
-
-  return '<table class="pv" style="width:' + px(L.widths.reduce(function(a,b){return a+b;},0))
-    + '">' + head + '<tbody>' + body + '</tbody></table>';
-}
-
 /* ============================================================
    出力
 
-   ボタンは4つありますが、中身は2通りしかありません。
+   出し方は2通りです。役割がはっきり違います。
 
-     紙に出す   … 画面に描いてある帳票をそのまま印刷する。待ち時間なし
-     PDFにする  … 帳票テンプレート経由でドライブに保存する。1週あたり数秒
+     印刷   … 画面に描いてある帳票をそのまま刷る。サーバー往復なし、待ち時間なし。
+              日々の確認や、監査でその場に出すのはこちら。
+     確定   … 月が締まったときに1回だけPDFに焼き、ドライブに残す。
+              あとで印影やテンプレートを直しても、確定したPDFは変わりません。
+              「その時点でこうだった」の証明になるのがこちら。
 
    どのボタンから押しても、必ずこの節を通ります。
-     記録簿の「印刷」          → printPaper_('ledger')
-     出力画面の「この週を…印刷」→ printPaper_('export')
-     記録簿の「PDFを出力」      → startExportJob_({ … })  表示中の月ぜんぶ
-     出力画面の「この期間を…」  → startExportJob_({ … })  選んだ期間
+     記録簿の「印刷」          → printPaper_()
+     記録簿の「この月を確定」   → startJob_({ fn:'startFreeze', … })
 
    用紙・向き・余白はサーバーの CFG.PDF が唯一の出どころです。起動時に
    受け取って印刷用のCSSにも当てるので、ブラウザ印刷とPDF出力で
@@ -2650,42 +2783,31 @@ function printScale_(){
   var avail = probe.offsetWidth;
   document.body.removeChild(probe);
 
-  // いま出ている画面の帳票を測る。隠れている方は幅が0になってしまうため
-  var tbl = document.querySelector(
-    VIEW === 'export' ? '#pvBody table.pv' : '#lgBody table.pv');
+  // 紙に出るのは記録簿の帳票だけ。隠れていると幅が0になるので、そこを測る
+  var tbl = document.querySelector('#lgBody table.pv');
   if (!tbl || !avail) return 1;
   var w = tbl.offsetWidth;
   if (!w || w <= avail) return 1;      // 収まるなら原寸のまま
   return avail / w;
 }
 
-/** 画面をそのまま紙に出す。src は 'ledger' か 'export' */
-function printPaper_(src){
-  if (src === 'ledger'){
-    var d = LG.data;
-    if (!d) return;
-    if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
-    if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-    if (LG.edit){ LG.edit = false; lgRender(); }   // 入力欄のまま刷らない
-  } else {
-    if (!P.preview || !P.preview.hasTemplate){
-      toast('帳票テンプレートがありません', true);
-      return;
-    }
-  }
+/** 記録簿に描いてある帳票を、そのまま紙に出す(1週 = 1ページ) */
+function printPaper_(){
+  var d = LG.data;
+  if (!d) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
+  if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
+  if (LG.edit){ LG.edit = false; lgRender(); }     // 入力欄のまま刷らない
   // 描き直した直後に呼ばれることがあるので、反映を待ってから
   setTimeout(function(){ window.print(); }, 60);
 }
 
 window.addEventListener('beforeprint', function(){
-  var t = document.querySelector('#pvWrap table.pv');
-  if (t) t.style.transform = '';                 // 画面用の縮小は外す
   document.documentElement.style.setProperty('--pscale', printScale_().toFixed(4));
 });
 
 window.addEventListener('afterprint', function(){
   document.documentElement.style.removeProperty('--pscale');
-  if (VIEW === 'export') fitPreview_();
 });
 
 /* ---------- PDFにして残す ----------
@@ -2746,29 +2868,27 @@ function jobEta_(j){
 }
 
 /** o = { from, to, title, hasTemplate } */
-function startExportJob_(o){
+/**
+ * PDFを作るジョブを始める。
+ * o = { fn:呼ぶサーバー関数, args:引数, weeks:何週ぶんか, title:帯に出す名前,
+ *       confirm:始める前に見せる文 }
+ */
+function startJob_(o){
   if (JOB.busy){
     toast('ほかの出力を実行中です。終わるまでお待ちください', true);
     return;
   }
-  if (!o.from || !o.to){ toast('開始日と最終日を選んでください', true); return; }
-  if (!o.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
-
-  var weeks = weekCount_(o.from, o.to);
-  var est = estimateSec_(weeks);
-  if (!confirm(jp(o.from) + ' 〜 ' + jp(o.to) + ' の ' + weeks + ' 週分をPDFにします。\n'
-      + (est ? '前回までの実績から、およそ ' + humanSec_(est) + ' かかる見込みです。\n' : '')
-      + 'ドライブの「業務日報_出力」フォルダに保存します。\nよろしいですか？')) return;
+  if (!confirm(o.confirm)) return;
 
   JOB.busy = true;
   JOB.at0 = Date.now();
   JOB.data = {
-    state:'running', done:0, weeks:new Array(weeks), title:o.title,
+    state:'running', done:0, weeks:new Array(o.weeks), title:o.title,
     startedAt: new Date().toISOString()
   };
   renderJob_();
 
-  call('startExport', [{ from:o.from, to:o.to, title:o.title, actor:S.me }], function(job){
+  call(o.fn, o.args, function(job){
     JOB.data = job;
     renderJob_();
     pollJob_();
@@ -2786,7 +2906,16 @@ function pumpJob_(){
     } else {
       endJob_();
       renderJob_();
-      if (job && job.state === 'done') toast('PDFを出力しました');
+      if (job && job.state === 'done'){
+        toast(job.kind === 'freeze'
+          ? job.month + ' を第' + job.version + '版として確定しました'
+          : 'PDFを出力しました');
+        // 確定したら、記録簿の表示と確定簿を新しくする
+        if (job.kind === 'freeze'){
+          if (LG.data) lgOpen(LG.data.monthStart);
+          if (VIEW === 'export') loadFix();
+        }
+      }
       else if (job && job.state === 'error') toast(job.message || '出力できませんでした', true);
     }
   }, function(e){ endJob_(); renderJob_(); fail(e); });
@@ -2882,11 +3011,17 @@ function paintJob_(){
   var time = document.getElementById('jobTime');
 
   if (j.state === 'done'){
-    ttl.textContent = 'PDFを出力しました';
-    step.textContent = esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）';
+    var freeze = (j.kind === 'freeze');
+    ttl.textContent = freeze
+      ? j.month + ' を第' + j.version + '版として確定しました'
+      : 'PDFを出力しました';
+    step.textContent = esc(j.title) + '（' + j.weeks.length + 'ページ）';
     fill.style.width = '100%';
-    time.innerHTML = 'ドライブの「業務日報_出力」フォルダに保存しました。'
-      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>';
+    time.innerHTML = 'ドライブの「業務日報_出力'
+      + (freeze ? '／' + j.month.slice(0, 4) : '') + '」に保存しました。'
+      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>'
+      + (freeze ? '<br>確定簿の画面から、いつでも開き直せます。'
+                + '中身が変わっていないかは［いま確かめる］で突き合わせられます。' : '');
     return;
   }
   if (j.state === 'error'){
@@ -2911,41 +3046,55 @@ function paintJob_(){
   } else {
     line += ' ／ まもなく終わります';
   }
-  line += '<br>この画面を閉じると出力は止まります。開いたままにしてください'
+  line += '<br>この画面を閉じると止まります。開いたままにしてください'
         + '（ほかの画面へ移っても続きます）。';
   time.innerHTML = line;
 }
 
-/** 表題。1か月に収まるなら「2026年8月分」、またぐなら日付でつなぐ */
-function jobTitle_(from, to){
-  var a = from.split('-'), b = to.split('-');
-  if (a[0] === b[0] && a[1] === b[1]) return a[0] + '年' + a[1] + '月分';
-  return a[0] + a[1] + a[2] + '-' + b[0] + b[1] + b[2];
-}
-
 /* ---------- 各ボタンの入口 ---------- */
 
-/** 出力画面「この期間をPDFにする」 */
-function startPrint_(){
-  startExportJob_({
-    from: P.from, to: P.to, title: jobTitle_(P.from, P.to),
-    hasTemplate: !!(P.preview && P.preview.hasTemplate)
-  });
-}
-
-/** 記録簿「PDFを出力」。表示している月ぜんぶ */
-function lgExport(){
-  var d = LG.data;
-  if (!d) return;
+/**
+ * 記録簿「この月を確定する」。
+ *
+ * 確定できるのは、月が終わっていて、未記録が無く、全日が承認済みのときだけです。
+ * 2回目以降は作り直す理由を書いてもらいます。前の版は消さず、
+ * 新しい版として積み増します。
+ */
+function lgFreeze(){
+  var d = LG.data, f = d && d.freeze;
+  if (!f) return;
+  if (!d.hasTemplate){ toast('帳票テンプレートがありません', true); return; }
   if (lgDirtyCount()){ toast('保存していない行があります。先に保存してください', true); return; }
-  startExportJob_({
-    from: d.monthStart, to: d.monthEnd, title: d.monthLabel + '分',
-    hasTemplate: d.hasTemplate
+  if (!f.ok){ toast('この月はまだ確定できません：' + f.reasons.join('／'), true); return; }
+
+  var note = '';
+  if (f.frozen){
+    note = prompt(d.monthLabel + ' には、すでに第' + f.latest.version + '版があります。\n'
+      + 'もう一度確定すると、第' + f.nextVersion + '版として積み増します'
+      + '（前の版は消えません）。\n\n'
+      + '作り直す理由を書いてください。監査で参照されます。', '');
+    if (note === null) return;
+    if (!String(note).trim()){ toast('理由を書いてください', true); return; }
+  }
+
+  var weeks = weekCount_(f.stat.start, f.stat.end);
+  var est = estimateSec_(weeks);
+  startJob_({
+    fn: 'startFreeze',
+    args: [{ month:f.month, note:note, actor:S.me }],
+    weeks: weeks,
+    title: d.monthLabel + ' 第' + f.nextVersion + '版',
+    confirm: d.monthLabel + ' を確定します（第' + f.nextVersion + '版）。\n'
+      + weeks + ' 週分 = ' + weeks + ' ページ。'
+      + (est ? '\nおよそ ' + humanSec_(est) + ' かかる見込みです。' : '')
+      + '\n\nドライブの「業務日報_出力／' + f.month.slice(0, 4) + '」に残ります。\n'
+      + 'あとから記録を直したいときは、承認を解除して直し、'
+      + 'もう一度確定してください。\n\nよろしいですか？'
   });
 }
 
 /** 記録簿「印刷」 */
-function lgPaper(){ printPaper_('ledger'); }
+function lgPaper(){ printPaper_(); }
 
 
 
@@ -2991,12 +3140,6 @@ function lgDirtyCount(){ return Object.keys(LG.dirty).length; }
 
 /** 元の値に、まだ保存していない編集を重ねたもの */
 function lgVal(r){ return Object.assign({}, r, LG.dirty[r.date] || {}); }
-
-/** 管理に関する事項を1行にまとめる(サーバー側の xferLine_ と同じ並び) */
-function lgNoteOf(v){
-  return XFER.map(function(f){ return String(v[f.key] || '').trim(); })
-             .filter(function(x){ return x; }).join('／');
-}
 
 function lgRow(date){
   var d = LG.data, hit = null;
@@ -3069,7 +3212,8 @@ function lgSave(date){
     toast(jp(date) + '：' + miss.join('・') + ' が未入力です', true);
     return;
   }
-  XFER.forEach(function(f){ payload[f.key] = String(v[f.key] || '').trim(); });
+  payload.note = String(v.note || '').trim();
+  payload.xfers = xClean_(v.xfers || []);
 
   if (outOf.length &&
       !confirm(jp(date) + '\n' + outOf.join('・') + ' が管理基準を外れています。\nこの値のまま記録しますか？')){
@@ -3132,52 +3276,103 @@ function lgOpenXfer(date){
   if (!r) return;
   var v = lgVal(r);
   LG.xfDate = date;
+  LG.xfList = (v.xfers || []).map(function(x){ return Object.assign({}, x); });
 
   document.getElementById('xfTitle').textContent =
-    jp(date) + '（' + r.dow + '）管理に関する事項';
+    jp(date) + '（' + r.dow + '）譲渡・譲受記録';
+  lgXfRender_();
+  document.getElementById('xfOverlay').classList.add('open');
+}
+
+/** 入力欄の中身を LG.xfList に写す(足す・消すで作り直す前に呼ぶ) */
+function lgXfSync_(){
+  (LG.xfList || []).forEach(function(x, i){
+    XFER.forEach(function(f){
+      var el = document.getElementById('xf' + i + '_' + f.key);
+      if (el) x[f.key] = el.value;
+    });
+  });
+}
+
+function lgXfRender_(){
+  var list = LG.xfList || [];
 
   document.getElementById('xfBody').innerHTML =
-      '<p class="lead-note">医薬品の譲渡・譲受があった日だけ記入します。'
-    + '入力した内容は帳票の「管理に関する事項」欄に1行にまとめて印字されます。</p>'
-    + '<div class="xfer-body">'
-    + XFER.map(function(f){
-        var val = v[f.key] == null ? '' : String(v[f.key]);
-        var input;
-        if (f.type === 'select'){
-          input = '<select id="xf_' + f.key + '"><option value=""></option>'
-                + f.choices.map(function(c){
-                    return '<option' + (c === val ? ' selected' : '') + '>' + esc(c) + '</option>';
-                  }).join('')
-                + '</select>';
-        } else {
-          input = '<div class="inputwrap"><input id="xf_' + f.key + '" type="'
-                + (f.type === 'month' ? 'month' : 'text') + '" value="' + esc(val) + '"></div>';
-        }
-        return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
-             + '<label for="xf_' + f.key + '">' + esc(f.label) + '</label>' + input + '</div>';
-      }).join('')
+      '<p class="lead-note">医薬品を渡した／受けた日だけ記入します。'
+    + '<b style="display:inline">1日に何件でも</b>入ります。'
+    + '帳票の下段に1件ずつ並びます。<br>'
+    + 'その日の特記事項（設備の点検、事故や苦情など）は、'
+    + 'こことは別の「管理に関する事項」の欄に書いてください。</p>'
+    + '<div id="xfList">'
+    + (list.length
+        ? list.map(function(x, i){
+            return '<div class="xrec">'
+              + '<div class="xrec-hd"><b>' + (i + 1) + ' 件目</b><div class="sp"></div>'
+              +   '<button class="mini danger" data-xfdel="' + i + '">この記録を消す</button>'
+              + '</div>'
+              + '<div class="xfer-body">'
+              + XFER.map(function(f){
+                  var id = 'xf' + i + '_' + f.key;
+                  var val = String(x[f.key] || '');
+                  var input;
+                  if (f.type === 'select'){
+                    input = '<select id="' + id + '"><option value=""></option>'
+                          + f.choices.map(function(c){
+                              return '<option' + (c === val ? ' selected' : '') + '>'
+                                   + esc(c) + '</option>';
+                            }).join('') + '</select>';
+                  } else {
+                    input = '<div class="inputwrap"><input id="' + id + '" type="'
+                          + (f.type === 'month' ? 'month' : 'text')
+                          + '" value="' + esc(val) + '"></div>';
+                  }
+                  return '<div class="field txt' + (f.wide ? ' wide' : '') + '">'
+                       + '<label for="' + id + '">' + esc(f.label) + '</label>' + input + '</div>';
+                }).join('')
+              + '</div></div>';
+          }).join('')
+        : '<div class="xnone">この日は譲渡・譲受はありません。'
+          + 'あった場合は［＋ 記録を追加］を押してください。</div>')
     + '</div>'
     + '<div class="actions">'
+    +   '<button class="mini" id="xfAdd">＋ 記録を追加</button>'
     +   '<button class="btn primary" id="xfOk">反映する</button>'
-    +   '<button class="btn ghost" id="xfClear">記載なしにする</button>'
+    +   '<button class="btn ghost" id="xfClear">ぜんぶ消す</button>'
     + '</div>';
 
-  document.getElementById('xfOverlay').classList.add('open');
+  Array.prototype.forEach.call(
+    document.getElementById('xfBody').querySelectorAll('[data-xfdel]'), function(b){
+      b.addEventListener('click', function(){
+        lgXfSync_();
+        LG.xfList.splice(Number(b.getAttribute('data-xfdel')), 1);
+        lgXfRender_();
+      });
+    });
+
+  document.getElementById('xfAdd').addEventListener('click', function(){
+    lgXfSync_();
+    var o = {};
+    XFER.forEach(function(f){ o[f.key] = ''; });
+    LG.xfList.push(o);
+    lgXfRender_();
+    var el = document.getElementById('xf' + (LG.xfList.length - 1) + '_xKind');
+    if (el) el.focus();
+  });
 
   document.getElementById('xfOk').addEventListener('click', function(){
-    XFER.forEach(function(f){
-      var el = document.getElementById('xf_' + f.key);
-      lgSet(LG.xfDate, f.key, el ? String(el.value).trim() : '');
-    });
+    lgXfSync_();
+    lgSet(LG.xfDate, 'xfers', xClean_(LG.xfList));
     lgCloseXfer();
     lgRender();
   });
+
   document.getElementById('xfClear').addEventListener('click', function(){
-    XFER.forEach(function(f){ lgSet(LG.xfDate, f.key, ''); });
+    lgSet(LG.xfDate, 'xfers', []);
     lgCloseXfer();
     lgRender();
   });
 }
+
 function lgCloseXfer(){ document.getElementById('xfOverlay').classList.remove('open'); }
 
 /* ---------- 表(帳票と同じ書式) ---------- */
@@ -3189,6 +3384,12 @@ function lgTable_(week){
   var span = Lay.cols - C.NOTE + 1;
 
   var blank = function(n){ var o = ''; for (var i = 0; i < n; i++) o += '<td></td>'; return o; };
+  // from〜to のうち skip 以外を空セルで埋める(管理に関する事項の列だけ別に出すため)
+  var blank2 = function(from, to, skip){
+    var o = '';
+    for (var c = from; c <= to; c++) if (c !== skip) o += '<td></td>';
+    return o;
+  };
 
   var stamp = function(name, pending){
     if (!name) return '<td class="st"></td>';
@@ -3238,12 +3439,21 @@ function lgTable_(week){
       + '<span class="rowact" id="act_' + r.date + '">' + lgActs_(r) + '</span>'
       + '</td>';
 
+    // 上段F。管理に関する事項(その日の特記事項)
+    var mg = ed
+      ? '<td class="mg ed"><input type="text" data-d="' + r.date + '" data-k="note"'
+        + ' value="' + esc(v.note || '') + '"></td>'
+      : '<td class="mg">' + esc(v.note || '') + '</td>';
+
+    // 下段。譲渡・譲受記録。何件でも1つのセルに並べる
+    var lines = xLines_(v);
     var note = ed
       ? '<td class="nt ed" colspan="' + span + '">'
-        + '<button class="notebtn' + (lgNoteOf(v) ? '' : ' empty') + '"'
+        + '<button class="notebtn' + (lines.length ? '' : ' empty') + '"'
         + ' data-act="xfer" data-date="' + r.date + '">'
-        + (lgNoteOf(v) ? esc(lgNoteOf(v)) : '＋ 譲渡・譲受を記入') + '</button></td>'
-      : '<td class="nt" colspan="' + span + '">' + esc(lgNoteOf(v)) + '</td>';
+        + (lines.length ? lines.map(esc).join('<br>')
+                        : '＋ 譲渡・譲受を記入') + '</button></td>'
+      : '<td class="nt" colspan="' + span + '">' + lines.map(esc).join('<br>') + '</td>';
 
     // 入力者と、その日の担当者は別人のことがある。
     // 代わりに入れた人の名前で押印しないよう、編集中は選べるようにする
@@ -3263,7 +3473,8 @@ function lgTable_(week){
       + '<td class="u">' + esc(Lay.unitRx) + '</td>'
       + n('inquiry', '1')
       + '<td class="u">' + esc(Lay.unitInq) + '</td>'
-      + blank(C.ROOM_T - C.INQ - 2)
+      + mg
+      + blank2(C.INQ + 2, C.ROOM_T - 1, C.MGMT)
       + e('roomTemp',  R.ROOM_TEMP,  Lay.phTemp,  1)
       + e('roomHumid', R.ROOM_HUMID, Lay.phHumid, 0)
       + e('coldTemp',  R.COLD_TEMP,  Lay.phTemp,  1)
@@ -3279,6 +3490,59 @@ function lgTable_(week){
 }
 
 /* ---------- 画面全体 ---------- */
+/**
+ * 確定のパネル。「いま何ができるか」を1か所に出します。
+ *
+ *   確定済み … 版とリンクを出す。作り直せることも書いておく
+ *   確定できる … 押していいと分かるように出す
+ *   まだ無理  … 何が足りないかを、そのまま直せる言葉で出す
+ */
+function lgFixBox_(d){
+  var box = document.getElementById('lgFixBox');
+  var btn = document.getElementById('lgFix');
+  var f = d.freeze;
+  if (!f){ box.hidden = true; btn.disabled = true; return; }
+
+  box.hidden = false;
+  box.classList.remove('ok', 'wait', 'go');
+
+  if (f.frozen){
+    var v = f.latest;
+    box.classList.add('ok');
+    box.innerHTML = '<span class="ic">✓</span><div class="bd">'
+      + '<b>確定済み　第' + v.version + '版</b>'
+      + esc(v.at) + '　' + esc(v.by || '—') + '　'
+      + '<a href="' + esc(v.url) + '" target="_blank" rel="noopener">PDFを開く</a>'
+      + (v.note ? '<br>' + esc(v.note) : '')
+      + '<br>記録を直したいときは、承認を解除して直し、'
+      + 'もう一度確定してください。前の版は残ります。'
+      + '</div>';
+    btn.disabled = false;
+    btn.textContent = '確定を作り直す';
+    return;
+  }
+
+  if (f.ok){
+    box.classList.add('go');
+    box.innerHTML = '<span class="ic">●</span><div class="bd">'
+      + '<b>この月は確定できます</b>'
+      + 'すべての日が記録され、承認も済んでいます。'
+      + '［この月を確定］を押すとPDFに焼いて、ドライブに残します。'
+      + '</div>';
+    btn.disabled = false;
+    btn.textContent = 'この月を確定';
+    return;
+  }
+
+  box.classList.add('wait');
+  box.innerHTML = '<span class="ic">…</span><div class="bd">'
+    + '<b>まだ確定できません</b>'
+    + '<ul>' + f.reasons.map(function(r){ return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>'
+    + '</div>';
+  btn.disabled = true;
+  btn.textContent = 'この月を確定';
+}
+
 function lgStat_(k, v, cls){
   return '<div class="lg-stat ' + (cls || '') + '">'
        + '<span class="k">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';
@@ -3326,6 +3590,8 @@ function lgRender(){
         }).join('')
     : '';
 
+  lgFixBox_(d);
+
   if (!d.hasTemplate){
     document.getElementById('lgBody').innerHTML =
         '<div class="blockmsg"><div><b>帳票テンプレートがありません</b>'
@@ -3350,8 +3616,10 @@ function lgRender(){
     + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。<br>'
     + '<b style="display:inline">印刷</b>… この画面をそのまま紙に出します。'
     + 'サーバーを介さないのですぐ出ます（' + d.weeks.length + 'ページ）。<br>'
-    + '<b style="display:inline">PDFを出力</b>… ドライブの「業務日報_出力」フォルダに'
-    + d.monthLabel + '分を保存します。控えを残すときはこちら（1週あたり数秒）。<br>'
+    + '<b style="display:inline">この月を確定</b>… ' + d.monthLabel
+    + 'が締まったら、その時点のPDFに焼いてドライブに残します。'
+    + '月に1回の作業です。あとから印影やテンプレートを直しても、'
+    + '確定したPDFは変わりません。<br>'
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
@@ -3362,8 +3630,9 @@ function lgRender(){
 document.getElementById('navInput').addEventListener('click', function(){ showView('input'); });
 document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
 document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
+document.getElementById('btnAdmin').addEventListener('click', function(){ showView('staff'); });
 document.getElementById('lgPaper').addEventListener('click', lgPaper);
-document.getElementById('lgPrint').addEventListener('click', lgExport);
+document.getElementById('lgFix').addEventListener('click', lgFreeze);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
 document.getElementById('lgNext').addEventListener('click', function(){ lgNav(LG.data && LG.data.nextMonth); });
 
@@ -3450,6 +3719,53 @@ var MOCK = (function(){
   var SEAL_A = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAFRklEQVR42u3dO3IbOxBG4RkU1+LAa9DyvQYG2owdOVEg8QEM+vGdqpvaYqMP/u4Zmfc4AAAAAAAAAAAAanIqwXX8+f3r76w/6+P+6ewI0lsC8hCEDKQhCCEIQxBSkIUgpCALQYgBohCEFGQhCDGIQhBiEIUgxCAKQWqLMbOhqn4ugjQQY2fDdP3cBAnaJBmaQj0IcmkjZG4CNWooyBWHXnF8ULcGgqw85E6PM9WxoCCrDrXzm2M1LSDIikP0u0fqXEKQ2YdGDDUvI4h/063+BHEwziMQw2FgZx2j/47c2UEOYjijcoLMKDwxnFfJEYscPceuiOPWIAdIkmTEerc4xHCWZROEHNIkYpIMcoAkgUesd4pAjB4j185zHoqG6GmyM0kGOUCSYIKQgyRZJBldigvnmEKQV28BcpBkR4oMcoAkAQQhBzJKMioWD3aSVIK8Yjs5SBIhRW5RR6suPFIfl8X39VtZnxFRDg0hRaJcwqNKkWAfSSWIvQMV9pHhOICLBZEeqJIigxwgSeARixyI3B9T34NkeOfhvUN9Zr4bGZ1vB0iRywTxxhzZJoXQCSI98jRJ5xQZOw6CHOvFqJjoz/bNjBrctFPttFj9y3zVGasORnpIiwop4ldN7CJYJYj06Lu8dkkRCSJFEEEQ6aG2GT/zy4K4kdAhQY1YjW5Ul9pFgljO0WVZlyBGDewURHpY1jN/5qcFcQNJkU6f3YjlRsUuQRyWFMl+KYyuRZUiLgcjFvAmy54jR7nFpF6fxFrRnxIEmCGImxgd95AlCWJJRJVRz4gFEAQgCLBHEAs6ui7q52xBoi/o0b68+qqfp9OXds/sVyMWTAoEgUfvBIEUIQikCEGALIJUeoKFHl8P9Ewf/vRZJQhAEFjWCQKjMEEgRQgCKUIQgCBIniLdxyyCAASBFCEIQBDsoWuKEAQe+RIEUoQgkCIEAQiCsCnSbcwiCPANN4tl/Fsy+s9TeX/5MUFm/vNFINqF4ovjADsIQBCAIABBgK6CeJKFnczuv4feg3zcP8+sjf/1MV7X/z+IC++1uhqxQCKCYOUtawcBCCJy8XqKRDjzFT/DmFkkoNroaMSCyWGHIMYsy3oFOSUIXIyzBLGHSJFun2NpghizpEj2v8+IhZYpskwQYxY6Cb48QYxZPZvsqnNf/fcYsYDZgjwbU1LEsh7hz39lPZAgsKyvEMSyjkzTw6v9OroVCjVS5Kp+ujlmGMMWJYhlHV974OP+ef7/L/NyLkEgLa7YQaQIon0LzMyfzWNeYLUgUgQV02NrgpAEGfplmiBeHKLiXjQ63gqQHo9ym21t9KaXdNIjTYJIEUTvjxHBXpJgVl/MnhCWJAhJUEGOECMWEJllgkgRZE+PkAlCEnK0SJB3rCYJOSKkx3Ecxxn1g3tfQZAIfXLJiGUfQdZLdFQrGuwdKQWxjyDL3rEtQUiCTHJsGbFIgixyhN9BSEKONjvIrFuAJH3l2PHof1uCkIQc0eXYPmKRhByR5TiOi96kr252b93r7hu7zzbEkv5uEaQJOUoLQhJyRJ0KzmqFNXI5v5IJMrM40oQcZQUhCTkicVYvupHLGZUVZHYSEMW5lBixVhXP2EWOcgkiTdSfIBtTgChqXkqQVaMSUdS5jCCrd4rOsqhpIUFWL96dRFHHooKsPtzKsqhbE0GuPPDsh65GjQW5ugmyNIJ6EGRrU0Rqkq6fmyAJG2ZlA1X9XAQhShk6POVr97yfKMQgCFGIQRCiEIMgZCEFQYhCDIKQhRQEIQspCIKEwhCCIKQhA0HIQwIAAAAAAAAAAB7kH5oC8/+VfJnVAAAAAElFTkSuQmCC';
   var SEAL_B = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAYAAACtWK6eAAAF7ElEQVR42u3dy5UbNxAFUBLHsXjhGBS+Y/DCyVgr7awzQxJA/e4LQNNdqMsCSJH9eIiIiIiIiIiIiIiIiPTMUwnu5e+//vxv17/1459/rR0gsxHAAwgM0AACBDCAQAELIFDAAggYAgogUMACCBigAAIGKICAAQogvWHsbKiu9wXIABiRDTP1vgFJ2iQVmkI9ALnaCJWbQI0GArmx6B23D+o2AMjJRZ70dqY6NgRyalEnf3Kspg2AnFhE//dInVsA2b1oYKh5GyC+063+gFgY65Eoy2JIZB2z/x+55wQcYFijdkB2FB4M69VyiwXHzG1Xxu3WgkMgKbLF+rQ4YFjLthMEDtMk4yRZcAgkibdYnxQBjBlbrsh1Xoom2adJ5CRZcAgkyYDAAUkVJGtKccU6lgDy7qsAHJBETJEFh0CSAAgcUhHJ6lg8cSYpBeQd7XBAkmGKrIw4RLL018p48aaHKZIFyepSJHEeKQXEuUM6nEeW5RC5DMT0kC5TZMEhkCTeYsEhmftjKxCfeUiG7OzD0AmSYXpAnb8+Lb5yW7HRfl0zJP3qs+ua18RXhf8rICS56xPVLytCazYckNSoz6t9s+N6l8WHRH0OAqk0Pb57rVORVKjP7SmyLD4k6nMISJXp8e5iTmmCavW5OUVGTJCqv+qXGUf0drnMGaRKMSHphePW31+TmgaSuZPj3fsd9zYvJLZVx4FU+2AQkp44bhzWx36jcCISkyPhFitzYSch6Yrj9LWt7o0BicnxSS38aENzJHAk3mJVKnBHJFNwnLzW1aERIDE5TtXGFqshEjgKbLEqF7oykqk4Tl27CdIIickRCGTil4gqIYHjTL1WtsaCBI5M92KLVRwJHEUP6ZCcRwIHIJDAkR+I34vKhQSOey8yK1MDQQJHtv6zxSqEBA5nEEjgAASS15oeDkAggQMQSF5DAEcBIK8s0vRF2YkEjjvr8FWdTZCESOCwxYLEmQMQSPr+PUCkTNPCAQgkcITkj2435MlQ87aXJogIICKAiAAiAogIICKAiMhv0u5zkGzvwd/4nMKHhSZIyVT4ZUUBpDUOSAAZhcNz3AGB4wsckBQCsvPri3B8v86Q3FmHr+psgiTeVkFiiwXHFwggAQQOB3dA4Pis6SEBBA5I+gOZsBCRP80Dyd17XDcW1QLsrSMke/KdOtpiFcMBiTMIHJAAAgckY4F0KnyF38qF5Ny9rGyLDQckmepli9UAByQFzyCVC175EQRTkZy6dhOkEQ6TJBhI93NIp4fXQLKnNitrw8EBSYZrtcV69H7smUlyGUi3bdaEZwJC8n4tVuYGhAOS6Gsbu8Wa+DRZk+QSkFcLna24kx+13AnJq9fzzr2PmyCeQ26SXAFSsVngmIvk3ftdFZoTDkii/v6ILRYcJkkIkAqHdTj6IblxOB8zQSJ+YkedTJBSU+Tmj7RNQhJRp5vTY8wZ5JVCTf+JI3U6AKTKB4cnfyh6EpKoOt2eHqETJBsSOHLXKapf1umCVlh8OPrVade1hp5BIt9H3/G4s0lIIusU2Scro9pqrzIO7n2vN/xdLN9ak8z9sTLohUR29cXuaXdkgkAiHXCk2GKJZM4xIKaIVJ8eKScIJHCMmCCfqIYEjgzT48oE8VmDVO6vlfUmTBHTI8OL7+pWNHHuKAnEeUSqnDvCJggkUglHyBYLEqmCI/0ZBBI4xpxBdr0KQDIXR8RHBmETBBI4suMI32JBAkdmHI/H4/GsXrzoAkrvtU1xSP+0CKYJHK2BQAJH1l3Bs1thbbmsX8sJsrM4pgkcbYFAAkemPLsX3ZbLGrUFsnsSgGJdWmyxThXPtguOdhPENFF/QAKnAChq3grIqa0SKOrcBsjpM8VkLGraCMjpg/ckKOrYFMjpxe2MRd2GALm54NUXXY0GA7ndBFUaQT0ACW2KTE0y9b4BKdgwJxuo630BAkqbTHiXb9z7/aCAAQgoYAACChiAwAIFIKCAAQgsUAACCxSASEEwQAACDQyAwAOBiIiIiIiIiIiIiMg38xO0tp1pduyeFAAAAABJRU5ErkJggg==';
 
+  // 確定台帳（プレビュー用。実際はスプレッドシートの「確定台帳」シート）
+  var fixes = [];
+
+  function monthEndOf(month){
+    var mp = month.split('-');
+    return iso(new Date(+mp[0], +mp[1], 0));
+  }
+  function fixOfMock(month){
+    return fixes.filter(function(x){ return x.month === month; })
+                .sort(function(a,b){ return b.version - a.version; });
+  }
+  // プレビュー用の見せかけのハッシュ。形（64桁の16進）だけ本物に合わせる
+  function fakeHash(seed){
+    var h = '';
+    for (var i = 0; i < 64; i++){
+      var x = i;
+      for (var j = 0; j < seed.length; j++) x = (x * 31 + seed.charCodeAt(j)) % 16;
+      h += x.toString(16);
+    }
+    return h;
+  }
+  function freezeState(month){
+    var mStart = month + '-01', mEnd = monthEndOf(month);
+    var stat = { month:month, start:mStart, end:mEnd,
+                 days:0, filled:0, approved:0, missing:0 };
+    for (var d = mStart; d <= mEnd; d = addDays(d, 1)){
+      stat.days++;
+      var r = store[d];
+      if (!r || r.state === 'editing' || r.state === 'empty'){ stat.missing++; continue; }
+      stat.filled++;
+      if (r.state === 'approved') stat.approved++;
+    }
+    var vers = fixOfMock(month);
+    var live = vers.filter(function(x){ return x.alive; });
+    var reasons = [];
+    if (mEnd >= todayIso) reasons.push('その月がまだ終わっていません');
+    if (stat.missing) reasons.push('未記録が ' + stat.missing + ' 日あります');
+    var un = stat.filled - stat.approved;
+    if (un) reasons.push('未承認が ' + un + ' 日あります');
+    return {
+      month: month, stat: stat, unapproved: un, versions: vers,
+      latest: live.length ? live[0] : null, frozen: !!live.length,
+      nextVersion: vers.reduce(function(m,x){ return Math.max(m, x.version); }, 0) + 1,
+      ok: !reasons.length, reasons: reasons
+    };
+  }
+
   var staff = [
     { id:'s1', name:'関根 禎浩', active:true,  sealUrl:SEAL_A },
     { id:'s2', name:'山田 太郎', active:true  },
@@ -3466,7 +3782,7 @@ var MOCK = (function(){
   var log = [
     { at: shift(today,-120).slice(5).replace('-','/') + ' 09:00', action:'管理薬剤師の交代',
       detail:'高橋 実 → 関根 禎浩(' + shift(today,-120) + ' から)', actor:'高橋 実' },
-    { at: shift(today,-118).slice(5).replace('-','/') + ' 10:20', action:'担当者を退職',
+    { at: shift(today,-118).slice(5).replace('-','/') + ' 10:20', action:'担当者を在籍から外す',
       detail:'高橋 実', actor:'関根 禎浩' }
   ];
 
@@ -3572,16 +3888,26 @@ var MOCK = (function(){
     }
   })();
 
-  // 譲渡があった日のサンプル(記録のある最初の日に入れる)
+  // 見本。管理に関する事項と、譲渡・譲受記録(1日に複数件)を別々に入れる
   var xDay = days.filter(function(d){
     return store[d.date] && store[d.date].state !== 'editing'; })[0];
   if (xDay){
     Object.assign(store[xDay.date], {
-      xKind:'譲渡', xPartner:'あおぞら薬局 北24条店', xMaker:'第一三共',
-      xDrug:'ロキソニン錠60mg', xPack:'PTP 100錠', xQty:'1箱',
-      xLot:'A4K21', xExpiry:'2028-03'
+      note: '調剤台の照度を測定（520lx）。基準内。',
+      xfers: [
+        { xKind:'譲渡', xPartner:'あおぞら薬局 北24条店', xMaker:'第一三共',
+          xDrug:'ロキソニン錠60mg', xPack:'PTP 100錠', xQty:'1箱',
+          xLot:'A4K21', xExpiry:'2028-03' },
+        { xKind:'譲受', xPartner:'きた薬局 麻生店', xMaker:'あゆみ製薬',
+          xDrug:'カロナール錠500mg', xPack:'PTP 100錠', xQty:'2箱',
+          xLot:'B7M03', xExpiry:'2027-11' }
+      ]
     });
   }
+  // 譲渡は無いが特記事項だけある日も入れておく
+  var nDay = days.filter(function(d){
+    return store[d.date] && store[d.date].state !== 'editing'; })[1];
+  if (nDay) store[nDay.date].note = '冷蔵庫の温度計を校正。';
 
   function week(anchor){
     var days = daysOf((anchor && anchor <= todayIso) ? anchor : todayIso);
@@ -3604,7 +3930,7 @@ var MOCK = (function(){
         var s = store[d.date] || { state:'empty' };
         return Object.assign({ date:d.date, dow:d.dow,
           rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
-          xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+          note:'', xfers:[],
           staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:'' }, s);
       })
     };
@@ -3613,13 +3939,13 @@ var MOCK = (function(){
   // 実物のテンプレートを模した寸法(本番はシートから読み取ります)
   var LAYOUT = {
     cols: 12, headRows: 2, rowsPerDay: 2,
-    widths: [104, 50, 50, 50, 50, 359, 58, 50, 54, 50, 98, 98],
+    widths: [104, 50, 50, 50, 50, 327, 58, 46, 54, 46, 98, 98],
     heights: [42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42, 42],
     row1: ['日付\n営業時間','処方箋枚数','','疑義照会件数','','管理に関する事項',
            '調剤室\n温度/湿度','','冷所\n温度/湿度','','担当者印','管理者印'],
     sub: '譲渡区分/譲渡先名/販売メーカー名称/医薬品名称/包装形態/譲渡数/Lot/使用期限',
     unitRx: '枚', unitInq: '件', phTemp: '℃　/', phHumid: '%',
-    col: { DATE:1, RX:2, INQ:4, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
+    col: { DATE:1, RX:2, INQ:4, MGMT:6, ROOM_T:7, ROOM_H:8, COLD_T:9, COLD_H:10,
            STAFF:11, ADMIN:12, NOTE:2 }
   };
 
@@ -3656,7 +3982,7 @@ var MOCK = (function(){
           var r = Object.assign({
             date: day.date, dow: day.dow, hours:'10:00〜20:00',
             rx:null, inquiry:null, roomTemp:null, roomHumid:null, coldTemp:null, coldHumid:null,
-            xKind:'', xPartner:'', xMaker:'', xDrug:'', xPack:'', xQty:'', xLot:'', xExpiry:'',
+            note:'', xfers:[],
             staff:'', admin:'', savedAt:'', approvedAt:'', lockedBy:''
           }, s);
 
@@ -3665,8 +3991,7 @@ var MOCK = (function(){
           r.approver = r.admin;
           r.chief    = chiefOn(day.date);
           r.admin    = r.admin || r.chief;
-          r.note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
-            .map(function(k){ return r[k]; }).filter(function(x){ return x; }).join('／');
+          r.xfers = (r.xfers || []).map(function(x){ return Object.assign({}, x); });
           r.inMonth = (day.date >= mStart && day.date <= mEnd);
           r.future  = (day.date > todayIso);
 
@@ -3705,7 +4030,8 @@ var MOCK = (function(){
         hours:'10:00〜20:00',
         ranges:{ ROOM_TEMP:[1,30], ROOM_HUMID:[30,70], COLD_TEMP:[2,8], COLD_HUMID:null },
         layout: LAYOUT, hasTemplate: true, seals: seals,
-        weeks: weeks, stat: stat, alerts: alerts
+        weeks: weeks, stat: stat, alerts: alerts,
+        freeze: freezeState(mStart.slice(0,7))
       };
     },
 
@@ -3720,8 +4046,8 @@ var MOCK = (function(){
         rx:p.rx, inquiry:p.inquiry,
         roomTemp:p.roomTemp, roomHumid:p.roomHumid,
         coldTemp:p.coldTemp, coldHumid:p.coldHumid,
-        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
-        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        note: String(p.note || ''),
+        xfers: (p.xfers || []).map(function(x){ return Object.assign({}, x); }),
         staff: p.rowStaff || prev.staff || p.actor,
         savedAt: hh, admin:'', approvedAt:''
       };
@@ -3778,10 +4104,12 @@ var MOCK = (function(){
         seals: seals,
         rows: w.days.map(function(d){
           var filled = d.state === 'saved' || d.state === 'approved';
-          var note = ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
-            .map(function(k){ return d[k]; }).filter(function(x){ return x; }).join('／');
+          var lines = (d.xfers || []).map(function(x){
+            return ['xKind','xPartner','xMaker','xDrug','xPack','xQty','xLot','xExpiry']
+              .map(function(k){ return x[k]; }).filter(function(v){ return v; }).join('／');
+          }).filter(function(v){ return v; });
           return { date:d.date, dow:d.dow, hours:'10:00〜20:00',
-            rx:d.rx, inquiry:d.inquiry, note:note,
+            rx:d.rx, inquiry:d.inquiry, note:d.note || '', xfers:lines,
             roomTemp:d.roomTemp, roomHumid:d.roomHumid,
             coldTemp:d.coldTemp, coldHumid:d.coldHumid,
             filled:filled, approved:d.state === 'approved',
@@ -3807,10 +4135,114 @@ var MOCK = (function(){
       if (job.done >= job.weeks.length){
         job.state = 'done';
         job.pdfUrl = 'https://drive.google.com/(プレビューでは実際のPDFは作られません)';
+        if (job.kind === 'freeze'){
+          fixes.push({
+            id: 'f' + (fixes.length + 1),
+            month: job.month, version: job.version,
+            at: todayIso.replace(/-/g,'/') + ' 12:00',
+            by: job.actor || '',
+            name: job.month + '_業務日報_v' + job.version
+                + '_確定' + todayIso.replace(/-/g,'') + '.pdf',
+            fileId: 'demo', url: job.pdfUrl, alive: true, note: job.note || '',
+            hash: fakeHash(job.month + 'v' + job.version),
+            chain: fakeHash('chain' + job.month + 'v' + job.version)
+          });
+        }
       }
       return job;
     },
     cancelExport: function(){ if (job) job.state = 'canceled'; return job; },
+
+    /* ---------- 月次の確定 ---------- */
+    // プレビューと試験用。指定した月を「全日 記録あり・承認済み」にする
+    _fillMonth: function(month){
+      var mEnd = monthEndOf(month);
+      for (var d = month + '-01'; d <= mEnd; d = addDays(d, 1)){
+        store[d] = { state:'approved', rx:80, inquiry:1,
+          roomTemp:23, roomHumid:47, coldTemp:5, coldHumid:52,
+          staff:'山田 太郎', admin:'関根 禎浩', savedAt:'18:00', approvedAt:'18:30' };
+      }
+      return true;
+    },
+
+    getFreezeState: function(month){ return freezeState(String(month).slice(0,7)); },
+
+    startFreeze: function(p){
+      var f = freezeState(String(p.month).slice(0,7));
+      if (!f.ok) throw new Error('この月はまだ確定できません：' + f.reasons.join('／'));
+      var note = String(p.note || '').trim();
+      if (f.frozen && !note){
+        throw new Error('すでに第' + f.latest.version
+          + '版があります。作り直す理由を書いてください');
+      }
+      var weeks = [], a = new Date(f.stat.start), b = new Date(f.stat.end);
+      while (a <= b){ weeks.push(a.toISOString().slice(0,10)); a.setDate(a.getDate() + 7); }
+      job = {
+        kind:'freeze', month:f.month, version:f.nextVersion, note:note, actor:p.actor,
+        from:f.stat.start, to:f.stat.end,
+        title: f.month + '_業務日報_v' + f.nextVersion,
+        weeks:weeks, done:0, startedAt:new Date().toISOString(),
+        state:'running', pdfUrl:''
+      };
+      return job;
+    },
+
+    getFixList: function(){
+      var byMonth = {};
+      fixes.slice().sort(function(a,b){
+        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
+        return b.version - a.version;
+      }).forEach(function(x){ (byMonth[x.month] = byMonth[x.month] || []).push(x); });
+      var months = Object.keys(byMonth).sort().reverse().map(function(m){
+        var live = byMonth[m].filter(function(x){ return x.alive; });
+        return { month:m, label: m.slice(0,4) + '年' + Number(m.slice(5,7)) + '月',
+                 versions: byMonth[m], latest: live.length ? live[0] : null };
+      });
+      return { store:'くるむ薬局 札幌店', today: todayIso, months: months };
+    },
+
+    verifyFixes: function(){
+      return {
+        total: fixes.length, bad: 0, at: stamp(),
+        items: fixes.map(function(x){
+          return { month:x.month, version:x.version, name:x.name,
+                   alive:x.alive, state:'ok', detail:'' };
+        })
+      };
+    },
+
+    bundleFixes: function(p){
+      var seen = {}, picked = [];
+      fixes.slice().sort(function(a,b){
+        if (a.month !== b.month) return a.month < b.month ? 1 : -1;
+        return b.version - a.version;
+      }).forEach(function(x){
+        if (!x.alive || x.month < p.from || x.month > p.to) return;
+        if (seen[x.month]) return;
+        seen[x.month] = true;
+        picked.push(x);
+      });
+      if (!picked.length) throw new Error('この期間に確定済みの月がありません');
+      picked.sort(function(a,b){ return a.month < b.month ? -1 : 1; });
+      var name = p.from + '_' + p.to + '_業務日報_'
+        + todayIso.replace(/-/g,'') + '.zip';
+      return {
+        name: name, url: 'https://drive/' + name, months: picked.length,
+        items: picked.map(function(x){
+          return { month:x.month, version:x.version, name:x.name, hash:x.hash };
+        })
+      };
+    },
+
+    voidFix: function(p){
+      if (!String(p.reason || '').trim()) throw new Error('取り消す理由を書いてください');
+      var f = fixes.filter(function(x){ return x.id === p.id; })[0];
+      if (!f) throw new Error('確定台帳にありません');
+      if (!f.alive) throw new Error('すでに取り消されています');
+      f.alive = false;
+      f.note = (f.note ? f.note + ' / ' : '') + '取消：' + p.reason;
+      return MOCK.getFixList();
+    },
     getExportStatus: function(){ return job; },
 
     claimDay: function(p){
@@ -3829,8 +4261,8 @@ var MOCK = (function(){
         rx:p.rx, inquiry:p.inquiry,
         roomTemp:p.roomTemp, roomHumid:p.roomHumid,
         coldTemp:p.coldTemp, coldHumid:p.coldHumid,
-        xKind:p.xKind||'', xPartner:p.xPartner||'', xMaker:p.xMaker||'', xDrug:p.xDrug||'',
-        xPack:p.xPack||'', xQty:p.xQty||'', xLot:p.xLot||'', xExpiry:p.xExpiry||'',
+        note: String(p.note || ''),
+        xfers: (p.xfers || []).map(function(x){ return Object.assign({}, x); }),
         staff:p.staff,
         savedAt: String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
         admin:'', approvedAt:'' };
@@ -3863,7 +4295,7 @@ var MOCK = (function(){
         throw new Error('現在の管理薬剤師です。先に交代を登録してください');
       if (p.active !== undefined){
         s.active = !!p.active;
-        push(s.active ? '担当者を復帰' : '担当者を退職', s.name, p.actor);
+        push(s.active ? '担当者を在籍に戻す' : '担当者を在籍から外す', s.name, p.actor);
       }
       return master();
     },
@@ -3871,9 +4303,9 @@ var MOCK = (function(){
     removeStaff: function(p){
       var s = findStaff(p.id); if (!s) throw new Error('名簿にありません');
       if (records(s.name) > 0)
-        throw new Error('日報に記録が残っているため削除できません。退職にしてください');
+        throw new Error('日報に記録が残っているため削除できません。在籍から外してください');
       if (terms.some(function(t){ return t.staffId === s.id; }))
-        throw new Error('管理薬剤師の履歴が残っているため削除できません。退職にしてください');
+        throw new Error('管理薬剤師の履歴が残っているため削除できません。在籍から外してください');
       staff = staff.filter(function(x){ return x.id !== s.id; });
       push('担当者を削除', s.name, p.actor);
       return master();
