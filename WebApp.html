@@ -583,31 +583,10 @@ button,input,select{font:inherit;color:inherit}
 .formrow select:focus,.formrow input:focus{outline:none;border-color:var(--accent)}
 .formrow label{font-size:11.5px;color:var(--muted);width:100%;margin-bottom:-4px}
 
-/* ---- 帳票の出力(独立した画面) ---- */
-/* 帳票そのものに幅を回したいので、枠の内側は詰める */
-#viewExport .card-bd{padding:12px}
-@media (max-width:640px){ #viewExport .card-bd{padding:8px} }
-.presets{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
-.range input[type="date"]{
-  flex:1;min-width:8.5em;padding:9px 11px;border:1.5px solid var(--line-strong);
-  border-radius:9px;background:var(--surface);font-size:14px;
-}
-.range input:focus{outline:none;border-color:var(--accent)}
-.range .tilde{color:var(--muted);font-size:13px}
-
-.pvwrap{
-  background:#fff;color:#111614;border:1px solid var(--line);border-radius:8px;
-  padding:10px;overflow-x:auto;margin-bottom:6px;
-  width:fit-content;max-width:100%;margin-left:auto;margin-right:auto;
-}
-/* シートの実寸で描く。画面に収まらないときは縮めて全体を見せる
-   (拡大はしない。実寸より大きいと、刷ったときの印象とずれるため) */
-.pvwrap table.pv{margin:0 auto;transform-origin:top left}
-.pvwrap.fit{overflow-x:hidden}
-.pvwrap.fit table.pv{margin:0}
-.pvscale{font-size:11px;color:var(--muted);margin:0 0 12px}
-.pvscale:empty{display:none}
+/* ---- 確定簿(独立した画面) ---- */
+#viewExport .card-bd{padding:14px 16px 16px}
+@media (max-width:640px){ #viewExport .card-bd{padding:12px} }
+.tilde{color:var(--muted);font-size:13px}
 /* ============================================================
    出力の進み具合(画面下に固定)
    長い出力では画面を見ていられないので、スクロールしても
@@ -686,21 +665,6 @@ table.pv td.nt{font-size:8px;line-height:1.4;height:22px;color:#111614}
 table.pv td.st{text-align:center;padding:1px}
 table.pv td.st img{width:24px;height:24px;display:block;margin:0 auto}
 table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
-.pvnote{font-size:11px;color:var(--muted);margin:0 0 14px}
-
-.progress{margin:14px 0 4px}
-.progress .bar{height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden}
-.progress .bar i{display:block;height:100%;background:var(--accent);width:0;
-  transition:width .25s ease}
-.progress .txt{font-size:12px;color:var(--muted);margin-top:7px;
-  font-variant-numeric:tabular-nums}
-.donebox{
-  background:var(--ok-soft);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);
-  border-radius:10px;padding:12px 14px;margin-top:14px;
-}
-.donebox b{display:block;font-family:var(--disp);color:var(--ok);font-size:14px;margin-bottom:4px}
-.donebox a{color:var(--accent);font-weight:700;font-size:13px}
-
 /* ---- 変更履歴 ---- */
 .logline{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:12.5px}
 .logline:first-child{border-top:0}
@@ -907,15 +871,14 @@ table.pv td.st i.pend{
 
 /* ============================================================
    印刷
-   画面に出ている帳票を、そのまま紙に落とします。
+   記録簿に出ている帳票を、そのまま紙に落とします。
    サーバーを介さないので待ち時間がありません。
-   ドライブにPDFを残したいときは「PDFを出力」を使ってください。
+   ドライブにPDFを残したいときは「この月を確定」を使ってください。
    ============================================================ */
 @media print{
   /* 画面のための部品は紙に出さない */
-  .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-note,.cols,.overlay,.toast,
-  #boot,#demoBar,.footnote,.presets,.range,.pvnote,.pvscale,
-  .progress,.donebox,.actions,.jobbar{display:none !important}
+  .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-fix,.lg-note,.cols,.overlay,.toast,
+  #boot,#demoBar,.footnote,.actions,.jobbar,#viewExport{display:none !important}
   body.jobbar-on{padding-bottom:0}
 
   body{background:#fff;padding:0}
@@ -928,7 +891,7 @@ table.pv td.st i.pend{
   .lg-week{page-break-after:always;break-after:page;margin:0;width:auto;max-width:none}
   .lg-week:last-child{page-break-after:auto;break-after:auto}
   .lg-week > h3{display:none}
-  .lg-sheet,.pvwrap{
+  .lg-sheet{
     border:0;box-shadow:none;padding:0;overflow:visible;outline:0 !important;
     width:auto;max-width:none;height:auto !important;margin:0;
   }
@@ -1198,16 +1161,12 @@ table.pv td.st i.pend{
   </div>
 </div>
 
-<!-- ============================================================
-     帳票の出力
-     期間を選び、帳票テンプレート経由でPDFにする画面。
-     ============================================================ -->
-<!-- 出力の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
+<!-- 確定の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
 <div class="jobbar" id="jobBar" hidden role="status" aria-live="polite">
   <div class="jb-in">
     <div class="jb-main">
       <div class="jb-head">
-        <b id="jobTitle">帳票の出力</b>
+        <b id="jobTitle">月次の確定</b>
         <span id="jobStep"></span>
       </div>
       <div class="jb-bar"><i id="jobFill"></i></div>
@@ -2559,9 +2518,7 @@ function fxVoid(id){
   }, fail);
 }
 
-/* 帳票は列幅の合計が1000pxを超えるので、画面によっては入りきりません。
-   はみ出す分だけ縮めて、1週間の全体が一目で分かるようにします。
-/* 印刷と出力の実装は「出力」の節にまとめてあります(下の方) */
+/* 印刷と確定の実装は「出力」の節にまとめてあります(下の方) */
 
 /* 何週になるか(帳票は週単位なので、端の週はまるごと1ページ) */
 function weekCount_(from, to){
@@ -2667,9 +2624,8 @@ function printScale_(){
   var avail = probe.offsetWidth;
   document.body.removeChild(probe);
 
-  // いま出ている画面の帳票を測る。隠れている方は幅が0になってしまうため
-  var tbl = document.querySelector(
-    VIEW === 'export' ? '#pvBody table.pv' : '#lgBody table.pv');
+  // 紙に出るのは記録簿の帳票だけ。隠れていると幅が0になるので、そこを測る
+  var tbl = document.querySelector('#lgBody table.pv');
   if (!tbl || !avail) return 1;
   var w = tbl.offsetWidth;
   if (!w || w <= avail) return 1;      // 収まるなら原寸のまま
@@ -2688,8 +2644,6 @@ function printPaper_(){
 }
 
 window.addEventListener('beforeprint', function(){
-  var t = document.querySelector('#pvWrap table.pv');
-  if (t) t.style.transform = '';                 // 画面用の縮小は外す
   document.documentElement.style.setProperty('--pscale', printScale_().toFixed(4));
 });
 
@@ -2898,11 +2852,17 @@ function paintJob_(){
   var time = document.getElementById('jobTime');
 
   if (j.state === 'done'){
-    ttl.textContent = 'PDFを出力しました';
-    step.textContent = esc(j.title) + '.pdf（' + j.weeks.length + 'ページ）';
+    var freeze = (j.kind === 'freeze');
+    ttl.textContent = freeze
+      ? j.month + ' を第' + j.version + '版として確定しました'
+      : 'PDFを出力しました';
+    step.textContent = esc(j.title) + '（' + j.weeks.length + 'ページ）';
     fill.style.width = '100%';
-    time.innerHTML = 'ドライブの「業務日報_出力」フォルダに保存しました。'
-      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>';
+    time.innerHTML = 'ドライブの「業務日報_出力'
+      + (freeze ? '／' + j.month.slice(0, 4) : '') + '」に保存しました。'
+      + '　<a href="' + j.pdfUrl + '" target="_blank">PDFを開く</a>'
+      + (freeze ? '<br>確定簿の画面から、いつでも開き直せます。'
+                + '中身が変わっていないかは［いま確かめる］で突き合わせられます。' : '');
     return;
   }
   if (j.state === 'error'){
@@ -2927,16 +2887,9 @@ function paintJob_(){
   } else {
     line += ' ／ まもなく終わります';
   }
-  line += '<br>この画面を閉じると出力は止まります。開いたままにしてください'
+  line += '<br>この画面を閉じると止まります。開いたままにしてください'
         + '（ほかの画面へ移っても続きます）。';
   time.innerHTML = line;
-}
-
-/** 表題。1か月に収まるなら「2026年8月分」、またぐなら日付でつなぐ */
-function jobTitle_(from, to){
-  var a = from.split('-'), b = to.split('-');
-  if (a[0] === b[0] && a[1] === b[1]) return a[0] + '年' + a[1] + '月分';
-  return a[0] + a[1] + a[2] + '-' + b[0] + b[1] + b[2];
 }
 
 /* ---------- 各ボタンの入口 ---------- */
@@ -3442,8 +3395,10 @@ function lgRender(){
     + '帳票テンプレートと同じ書式で表示しています。1週 = 印刷1ページです。<br>'
     + '<b style="display:inline">印刷</b>… この画面をそのまま紙に出します。'
     + 'サーバーを介さないのですぐ出ます（' + d.weeks.length + 'ページ）。<br>'
-    + '<b style="display:inline">PDFを出力</b>… ドライブの「業務日報_出力」フォルダに'
-    + d.monthLabel + '分を保存します。控えを残すときはこちら（1週あたり数秒）。<br>'
+    + '<b style="display:inline">この月を確定</b>… ' + d.monthLabel
+    + 'が締まったら、その時点のPDFに焼いてドライブに残します。'
+    + '月に1回の作業です。あとから印影やテンプレートを直しても、'
+    + '確定したPDFは変わりません。<br>'
     + '承認済みの日を直すと、承認は自動的に解除され、変更前後の値が変更履歴に残ります。'
     + '直したあとは管理薬剤師の再承認が必要です。</div>';
 
