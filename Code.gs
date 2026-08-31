@@ -139,6 +139,21 @@ const CFG = {
     HEAD_BG: '#f4f6f5'
   },
 
+  /** PDFにするときの紙の設定。
+   *
+   *  MARGIN_IN を広げると、帳票を縮める割合が大きくなります。
+   *  逆に狭めて帳票が原寸で収まるようになると、縮小せずに出力するので
+   *  外枠と紙の端のあいだに余裕ができ、罫線が欠けにくくなります。
+   *  （現在の帳票は 1071px ＝ 283.4mm。余白 0.2 インチなら原寸で収まります）
+   *
+   *  EDGE_GAP_PX … 原寸で出すかどうかの判定に使う余裕。罫線の太さぶん。 */
+  PDF: {
+    PAGE: 'A4',
+    LANDSCAPE: true,
+    MARGIN_IN: 0.4,
+    EDGE_GAP_PX: 6
+  },
+
   /** 印影PNGを入れるフォルダ名。スプレッドシートと同じ場所に自動作成します。
    *  ★ このフォルダは誰とも共有しないでください */
   SEAL_FOLDER_NAME: '業務日報_印影',
@@ -1557,6 +1572,13 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl) {
     stampCell_(sh, r1, t.COL.STAFF, seals[r.staff], geo);
   });
 
+  // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
+  // （四隅が欠けて見える原因）。少し太くしておくと欠けずに残ります。
+  // 内側の罫線は null を渡して触りません。
+  sh.getRange(1, 1, t.HEAD_ROWS + PRINT.DAY_ROWS * t.ROWS_PER_DAY, t.COLS)
+    .setBorder(true, true, true, true, null, null,
+               t.RULE, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
   return sh;
 }
 
@@ -1714,12 +1736,86 @@ function finishExport_(job, temp) {
   audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', '');
 }
 
-/** スプレッドシート全体をPDFにする(A4横・幅に合わせる) */
+/**
+ * 帳票が紙に原寸で収まるかを調べる。
+ * 収まるなら縮小をやめられます。縮小すると帳票の幅が
+ * 「印刷できる幅」とぴったり同じになり、外枠が切り取り線の真上に来ます。
+ */
+function printFit_() {
+  const t = T_();
+  const cfg = CFG.PDF;
+  const rows = t.HEAD_ROWS + PRINT.DAY_ROWS * t.ROWS_PER_DAY;
+
+  let w = 0, h = 0;
+  try {
+    const sh = templateSheet_();
+    for (let c = 1; c <= t.COLS; c++) w += sh.getColumnWidth(c);
+    for (let r = 1; r <= rows; r++) h += sh.getRowHeight(r);
+  } catch (e) {
+    return null;
+  }
+
+  const pageW = cfg.LANDSCAPE ? 297 : 210;   // A4 (mm)
+  const pageH = cfg.LANDSCAPE ? 210 : 297;
+  const availW = (pageW / 25.4 - cfg.MARGIN_IN * 2) * 96;   // シートの1pxは1/96インチ
+  const availH = (pageH / 25.4 - cfg.MARGIN_IN * 2) * 96;
+
+  return {
+    width: w, height: h,
+    availW: availW, availH: availH,
+    fits: (w + cfg.EDGE_GAP_PX <= availW) && (h + cfg.EDGE_GAP_PX <= availH),
+    scale: Math.min(1, availW / w)
+  };
+}
+
+/**
+ * ★ 手で実行して、帳票が紙に収まるかを確かめます。
+ *    外枠が欠けるときは、まずこれで縮小率を見てください。
+ */
+function checkPrintFit() {
+  const f = printFit_();
+  if (!f) { console.log('帳票テンプレートが読めませんでした'); return; }
+  const mm = function (px) { return (px / 96 * 25.4).toFixed(1) + 'mm'; };
+  const cfg = CFG.PDF;
+
+  console.log('■ 帳票の実寸');
+  console.log('   幅 ' + f.width + 'px (' + mm(f.width) + ')  高 '
+    + f.height + 'px (' + mm(f.height) + ')');
+  console.log('■ ' + cfg.PAGE + (cfg.LANDSCAPE ? '横' : '縦')
+    + '・余白' + cfg.MARGIN_IN + 'インチ のとき印刷できる範囲');
+  console.log('   幅 ' + Math.round(f.availW) + 'px (' + mm(f.availW) + ')  高 '
+    + Math.round(f.availH) + 'px (' + mm(f.availH) + ')');
+  console.log('■ 結果');
+  if (f.fits) {
+    console.log('   原寸で収まります。縮小せずに出力するので、外枠は欠けません。');
+  } else {
+    console.log('   はみ出すので ' + Math.round(f.scale * 1000) / 10 + '% に縮小します。');
+    console.log('   縮小すると帳票の幅が印刷できる幅と一致し、外枠が切り取り線の');
+    console.log('   真上に来ます（四隅が欠けて見える原因）。外枠は太くしてあるので');
+    console.log('   欠けにくくしていますが、気になるときは次のどちらかを。');
+    console.log('     ・CFG.PDF.MARGIN_IN を 0.2 に下げる（原寸で収まるようになります）');
+    console.log('     ・帳票テンプレートの列幅を合計 '
+      + Math.ceil(f.width + cfg.EDGE_GAP_PX - f.availW) + 'px ぶん詰める');
+  }
+  return f;
+}
+
+/** スプレッドシート全体をPDFにする */
 function exportPdf_(ssId, name) {
+  const cfg = CFG.PDF;
+  const m = cfg.MARGIN_IN;
+  const fit = printFit_();
+  // 収まるなら縮めない。縮めると外枠が紙の端に貼りついて欠けやすくなる
+  const fitw = !(fit && fit.fits);
+
   const url = 'https://docs.google.com/spreadsheets/d/' + ssId + '/export'
-    + '?format=pdf&size=A4&portrait=false&fitw=true'
+    + '?format=pdf&size=' + cfg.PAGE
+    + '&portrait=' + (cfg.LANDSCAPE ? 'false' : 'true')
+    + '&fitw=' + (fitw ? 'true' : 'false')
     + '&gridlines=false&printtitle=false&sheetnames=false&pagenum=CENTER'
-    + '&top_margin=0.4&bottom_margin=0.4&left_margin=0.4&right_margin=0.4';
+    + '&horizontal_alignment=CENTER&vertical_alignment=TOP'
+    + '&top_margin=' + m + '&bottom_margin=' + m
+    + '&left_margin=' + m + '&right_margin=' + m;
 
   const res = UrlFetchApp.fetch(url, {
     headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
