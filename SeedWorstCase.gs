@@ -57,7 +57,7 @@
  */
 
 /** この版の Code.gs が要ります。古いと途中で落ちるので、先に確かめます */
-const SEED_NEEDS = '2026-09-01';
+const SEED_NEEDS = '2026-09-02';
 
 const SEED = Object.freeze({
   /** 対象の月 */
