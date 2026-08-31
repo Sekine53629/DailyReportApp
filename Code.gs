@@ -876,6 +876,13 @@ function weekPayload_(anchorIso) {
     }),
     auth: authPayload_(staff),
     ranges: CFG.RANGES,
+    // 紙の設定はここが唯一の出どころ。画面のブラウザ印刷にも同じ値を使わせ、
+    // 「印刷」と「PDFを出力」で刷り上がりが食い違わないようにする
+    paper: {
+      page: CFG.PDF.PAGE,
+      landscape: CFG.PDF.LANDSCAPE,
+      marginIn: CFG.PDF.MARGIN_IN
+    },
     days: days
   };
 }
@@ -1659,6 +1666,14 @@ function weeksBetween_(fromIso, toIso) {
  */
 function startExport(p) {
   return guard_('startExport', function () {
+    // 出力先の一時ファイルはジョブ1件ぶんしか覚えられない。
+    // 走っているうちに次を始めると、前の一時ファイルが行方不明になる
+    const cur = currentJob_();
+    if (cur && cur.state === 'running') {
+      throw new Error('別の出力を実行中です（' + cur.from + ' 〜 ' + cur.to
+        + '）。終わるのを待つか、いったん中止してください');
+    }
+
     const from = fmt_(p.from), to = fmt_(p.to);
     if (!from || !to) throw new Error('期間が正しくありません');
     if (from > to) throw new Error('開始日が終了日より後になっています');
@@ -1679,6 +1694,7 @@ function startExport(p) {
       from: from, to: to, title: title,
       weeks: weeks, done: 0,
       tempId: temp.getId(),
+      actor: String(p.actor || ''),
       startedAt: new Date().toISOString(),
       state: 'running', pdfUrl: '', message: ''
     };
@@ -1702,38 +1718,64 @@ function runExportChunk() {
     const tpl = templateSheet_();          // テンプレートの引き直しも1回に
     const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
 
-    while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
-      const w = job.weeks[job.done];
-      const rows = weekRows_(w, idx, terms);
-      renderWeekSheet_(temp, w, rows, seals, geo, tpl);
-      job.done++;
-      PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
-    }
+    try {
+      while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
+        const w = job.weeks[job.done];
+        const rows = weekRows_(w, idx, terms);
+        renderWeekSheet_(temp, w, rows, seals, geo, tpl);
+        job.done++;
+        PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+      }
 
-    if (job.done >= job.weeks.length) {
-      finishExport_(job, temp);
+      if (job.done >= job.weeks.length) {
+        finishExport_(job, temp);
+      }
+    } catch (err) {
+      // 途中で落ちたまま放っておくと、一時ファイルがドライブに残り、
+      // ジョブも running のままで次の出力を始められなくなる
+      job.state = 'error';
+      job.message = String(err && err.message ? err.message : err);
+      trashTemp_(job);
+      PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+      throw err;
     }
     return job;
   });
 }
 
+/** 一時スプレッドシートを捨てる。成否にかかわらず必ず通す */
+function trashTemp_(job) {
+  if (!job || !job.tempId) return;
+  try {
+    DriveApp.getFileById(job.tempId).setTrashed(true);
+  } catch (e) {
+    console.warn('一時ファイルを片づけられませんでした: ' + e);
+  }
+  job.tempId = '';
+}
+
 /** すべての週が終わったらPDFにして、一時ファイルを片づける */
 function finishExport_(job, temp) {
-  const first = temp.getSheetByName('_');
-  if (first) temp.deleteSheet(first);
-  SpreadsheetApp.flush();
+  try {
+    const first = temp.getSheetByName('_');
+    if (first) temp.deleteSheet(first);
+    SpreadsheetApp.flush();
 
-  const pdf = exportPdf_(temp.getId(), job.title);
-  const file = outFolder_().createFile(pdf);
+    const pdf = exportPdf_(job.tempId, job.title);
+    const file = outFolder_().createFile(pdf);
 
-  DriveApp.getFileById(temp.getId()).setTrashed(true);
-
-  job.state = 'done';
-  job.pdfUrl = file.getUrl();
-  job.finishedAt = new Date().toISOString();
-  PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
-
-  audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', '');
+    job.state = 'done';
+    job.pdfUrl = file.getUrl();
+    job.finishedAt = new Date().toISOString();
+    audit_('帳票を出力', job.title + '（' + job.weeks.length + '週）', job.actor || '');
+  } catch (e) {
+    job.state = 'error';
+    job.message = String(e && e.message ? e.message : e);
+    throw e;
+  } finally {
+    trashTemp_(job);
+    PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+  }
 }
 
 /**
@@ -1854,17 +1896,19 @@ function cancelExport() {
   return guard_('cancelExport', function () {
     const job = currentJob_();
     if (!job) return null;
-    if (job.state === 'running' && job.tempId) {
-      try { DriveApp.getFileById(job.tempId).setTrashed(true); } catch (e) { /* 既に無い */ }
-    }
+    trashTemp_(job);
     job.state = 'canceled';
     PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
+    audit_('帳票の出力を中止', job.from + ' 〜 ' + job.to, job.actor || '');
     return job;
   });
 }
 
+/** ★ 出力の記録を消す。一時ファイルが残っていれば一緒に片づけます */
 function clearExport() {
   return guard_('clearExport', function () {
+    const job = currentJob_();
+    if (job) trashTemp_(job);
     PROP.deleteProperty(PRINT.JOB_KEY);
     return null;
   });
@@ -1874,27 +1918,41 @@ function clearExport() {
  *  5. 手動で使うショートカット
  * ========================================================== */
 
-/** 今週分だけ出す */
-function exportThisWeek() {
-  const w = weekStart_(today_());
-  startExport({ from: w, to: addDays_(w, 6), title: w + '_週報' });
+/**
+ * 画面から呼ぶのと同じ経路で最後まで走らせる。
+ * 手で実行するショートカットは、どれもこれを通します。
+ */
+function runExportNow_(from, to, title) {
+  clearExport();                       // 前の記録が残っていても始められるように
+  startExport({ from: from, to: to, title: title, actor: '手動実行' });
   let job = runExportChunk();
   while (job && job.state === 'running') job = runExportChunk();
-  Logger.log(job && job.pdfUrl ? 'PDF: ' + job.pdfUrl : '出力できませんでした');
+
+  if (job && job.state === 'done') Logger.log('PDF: ' + job.pdfUrl);
+  else Logger.log('出力できませんでした: ' + ((job && job.message) || '理由不明'));
+  return job;
 }
 
-/** 前月分を出す */
+/** ★ 今週分だけ出す */
+function exportThisWeek() {
+  const w = weekStart_(today_());
+  return runExportNow_(w, addDays_(w, 6), w + '_週報');
+}
+
+/** ★ 前月分を出す */
 function exportLastMonth() {
   const now = new Date();
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
-  startExport({
-    from: fmt_(first), to: fmt_(last),
-    title: Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分'
-  });
-  let job = runExportChunk();
-  while (job && job.state === 'running') job = runExportChunk();
-  Logger.log(job && job.pdfUrl ? 'PDF: ' + job.pdfUrl : '出力できませんでした');
+  return runExportNow_(fmt_(first), fmt_(last),
+    Utilities.formatDate(first, CFG.TZ, 'yyyy年MM月') + '分');
+}
+
+/** ★ 表示中の月を出す(記録簿のボタンと同じ範囲) */
+function exportThisMonth() {
+  const t = today_();
+  return runExportNow_(monthStart_(t), monthEnd_(t),
+    t.slice(0, 4) + '年' + t.slice(5, 7) + '月分');
 }
 
 /* ############################################################
