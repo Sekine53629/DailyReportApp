@@ -788,6 +788,24 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
 .lg-fix.go  {background:var(--info-soft); border-color:color-mix(in srgb,var(--info) 30%,transparent)}
 
 .fx-lead{font-size:12.5px;color:var(--muted);line-height:1.7;margin:0 0 14px}
+.fx-tools{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.fx-tool{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--surface)}
+.fx-tool>b{font-size:12.5px;min-width:7.5em}
+.fx-tool select{font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid var(--line);
+  border-radius:6px;background:var(--surface);color:var(--ink)}
+.fx-tool .hint{flex-basis:100%;font-size:11.5px;color:var(--muted);line-height:1.6}
+.fx-report[hidden]{display:none}
+.fx-report{border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  font-size:12.5px;line-height:1.7;background:var(--surface-2)}
+.fx-report.good{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.fx-report.bad{background:var(--crit-soft);border-color:color-mix(in srgb,var(--crit) 30%,transparent)}
+.fx-report a{color:var(--accent);font-weight:600;margin-left:8px}
+.fx-rep-list{margin-top:6px;display:flex;flex-direction:column;gap:2px}
+.fx-rep-list>div{font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.fx-rep-list>div.bad{color:var(--crit);font-weight:600}
+.fx-rep-list code{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.fx-ver .hash{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
 .fx-list{display:flex;flex-direction:column;gap:12px}
 .fx-month{border:1px solid var(--line);border-radius:10px;background:var(--surface);
   box-shadow:var(--shadow);overflow:hidden}
@@ -2387,7 +2405,11 @@ function renderFix(){
 
   h += '<p class="fx-lead">確定した月のPDFです。'
      + '記録を直したいときは、記録簿で承認を解除して直し、もう一度確定してください。'
-     + '前の版は消さずに残ります。</p>';
+     + '前の版は消さずに残ります。<br>'
+     + '確定したときのSHA-256を台帳に残しているので、'
+     + '中身が変わっていないかをあとから確かめられます。</p>';
+
+  h += fxTools_(d);
 
   h += '<div class="fx-list">' + d.months.map(function(m){
     var cur = m.latest;
@@ -2409,6 +2431,104 @@ function renderFix(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-void]'), function(b){
     b.addEventListener('click', function(){ fxVoid(b.getAttribute('data-void')); });
   });
+  var zip = document.getElementById('fxZip');
+  if (zip) zip.addEventListener('click', fxBundle);
+  var ver = document.getElementById('fxVerify');
+  if (ver) ver.addEventListener('click', fxVerify);
+}
+
+/* 確定簿の上に置く道具。
+   ・まとめて渡す … 確定済みのPDFをそのままZIPにする（作り直さないのですぐ終わる）
+   ・証跡を確認   … 記録したSHA-256と、いまのDrive上のPDFを突き合わせる */
+function fxTools_(d){
+  var opt = function(sel){
+    return d.months.map(function(m){
+      return '<option value="' + m.month + '"' + (m.month === sel ? ' selected' : '') + '>'
+        + esc(m.label) + '</option>';
+    }).join('');
+  };
+  var oldest = d.months[d.months.length - 1].month;
+  var newest = d.months[0].month;
+
+  return '<div class="fx-tools">'
+    + '<div class="fx-tool">'
+    +   '<b>まとめて渡す</b>'
+    +   '<select id="fxFrom">' + opt(oldest) + '</select>'
+    +   '<span class="tilde">〜</span>'
+    +   '<select id="fxTo">' + opt(newest) + '</select>'
+    +   '<button class="mini on" id="fxZip">ZIPにする</button>'
+    +   '<span class="hint">各月の「取り消していない最新版」を、確定したときのまま集めます。'
+    +     'PDFを1つに結合しないのは、結合すると別のファイルになり、'
+    +     '台帳のハッシュと一致しなくなるためです。'
+    +     'ZIPにはSHA-256を書いた目録が入ります。</span>'
+    + '</div>'
+    + '<div class="fx-tool">'
+    +   '<b>証跡を確認</b>'
+    +   '<button class="mini" id="fxVerify">いま確かめる</button>'
+    +   '<span class="hint">確定したときのSHA-256と、いまのPDFを突き合わせます。'
+    +     '台帳そのものが書き換えられていないかも、前後の行のつながり（連鎖）で確かめます。</span>'
+    + '</div>'
+    + '<div class="fx-report" id="fxReport" hidden></div>'
+    + '</div>';
+}
+
+/** 期間ぶんの確定PDFを1つのZIPにまとめる */
+function fxBundle(){
+  var from = document.getElementById('fxFrom').value;
+  var to   = document.getElementById('fxTo').value;
+  if (from > to){ toast('開始の月が終わりの月より後になっています', true); return; }
+
+  var btn = document.getElementById('fxZip');
+  btn.disabled = true;
+  btn.textContent = 'まとめています…';
+  call('bundleFixes', [{ from:from, to:to, actor:S.me }], function(r){
+    btn.disabled = false;
+    btn.textContent = 'ZIPにする';
+    var box = document.getElementById('fxReport');
+    box.hidden = false;
+    box.className = 'fx-report';
+    box.innerHTML = '<b>' + esc(r.name) + '</b>（' + r.months + 'か月）'
+      + '<a href="' + esc(r.url) + '" target="_blank" rel="noopener">ドライブで開く</a>'
+      + '<div class="fx-rep-list">' + r.items.map(function(x){
+          return '<div>' + esc(x.month) + ' 第' + x.version + '版　'
+            + '<code>' + esc((x.hash || '').slice(0, 16)) + '…</code></div>';
+        }).join('') + '</div>';
+    toast('ZIPにまとめました');
+  }, function(e){
+    btn.disabled = false;
+    btn.textContent = 'ZIPにする';
+    fail(e);
+  });
+}
+
+/** 確定PDFが確定時のままかを確かめる */
+function fxVerify(){
+  var btn = document.getElementById('fxVerify');
+  btn.disabled = true;
+  btn.textContent = '確かめています…';
+  call('verifyFixes', [], function(r){
+    btn.disabled = false;
+    btn.textContent = 'いま確かめる';
+    var LB = { ok:'確定時のまま', none:'ハッシュなし',
+               missing:'PDFが見つからない', changed:'中身が変わっている',
+               broken:'台帳が書き換えられている' };
+    var box = document.getElementById('fxReport');
+    box.hidden = false;
+    box.className = 'fx-report ' + (r.bad ? 'bad' : 'good');
+    box.innerHTML = '<b>' + (r.bad
+        ? '★ ' + r.bad + ' 件に問題があります'
+        : r.total + ' 件すべて確定時のままです') + '</b>'
+      + '<div class="fx-rep-list">' + r.items.map(function(x){
+          return '<div class="' + (x.state === 'ok' ? '' : 'bad') + '">'
+            + esc(x.month) + ' 第' + x.version + '版' + (x.alive ? '' : '（取消）')
+            + '　' + LB[x.state] + (x.detail ? '　' + esc(x.detail) : '')
+            + '</div>';
+        }).join('') + '</div>';
+  }, function(e){
+    btn.disabled = false;
+    btn.textContent = 'いま確かめる';
+    fail(e);
+  });
 }
 
 function fxVer_(v){
@@ -2418,6 +2538,7 @@ function fxVer_(v){
     + '<span class="by">' + esc(v.by || '—') + '</span>'
     + '<a class="nm" href="' + esc(v.url) + '" target="_blank" rel="noopener">'
     +   esc(v.name) + '</a>'
+    + (v.hash ? '<span class="hash">' + esc(v.hash.slice(0, 16)) + '…</span>' : '')
     + (v.note ? '<span class="note">' + esc(v.note) + '</span>' : '')
     + (v.alive ? '<button class="mini" data-void="' + esc(v.id) + '">取り消す</button>'
                : '<span class="tag">取消</span>')

@@ -197,7 +197,9 @@ const COLS = {
   LOG:   ['日時', '操作', '内容', '操作者'],
   // 月次を確定してPDFに焼いた記録。1行 = 1つの版
   FIX:   ['ID', '対象月', '版', '確定日時', '確定者',
-          'ファイル名', 'ファイルID', 'リンク', '状態', '備考']
+          'ファイル名', 'ファイルID', 'リンク',
+          // 証跡。ハッシュ = PDFそのもの、連鎖 = 1つ前の連鎖とこの行をまとめたもの
+          'ハッシュ', '連鎖', '状態', '備考']
 };
 
 const PROP = PropertiesService.getScriptProperties();
@@ -2580,6 +2582,8 @@ function fixList_() {
       name: String(r['ファイル名'] || ''),
       fileId: String(r['ファイルID'] || ''),
       url: String(r['リンク'] || ''),
+      hash: String(r['ハッシュ'] || ''),
+      chain: String(r['連鎖'] || ''),
       alive: String(r['状態'] || '有効') !== '取消',
       note: String(r['備考'] || ''),
       _row: r._row
@@ -2628,22 +2632,34 @@ function freezeCheck_(month, idx, terms) {
   };
 }
 
-/** 確定した結果を台帳に1行残す */
+/**
+ * 確定した結果を台帳に1行残す。
+ *
+ * ハッシュは、Driveに保存されたPDFそのものから取ります(渡された blob ではなく)。
+ * 「保存されている物」と「台帳の記録」を突き合わせたいので、保存後の実物を読みます。
+ */
 function recordFix_(job, file) {
   const t = table_(SH.FIX);
+  const at = new Date();
+  const hash = sha256Bytes_(file.getBlob().getBytes());
+  const chain = chainOf_(lastChain_(t), job.month, job.version, at, hash);
+
   appendRow_(t, {
     'ID': uid_('F'),
     '対象月': job.month,
     '版': job.version,
-    '確定日時': new Date(),
+    '確定日時': at,
     '確定者': job.actor || '',
     'ファイル名': file.getName(),
     'ファイルID': file.getId(),
     'リンク': file.getUrl(),
+    'ハッシュ': hash,
+    '連鎖': chain,
     '状態': '有効',
     '備考': String(job.note || '')
   });
   audit_('月次を確定', job.month + '（第' + job.version + '版）'
+    + '／SHA-256 ' + hash.slice(0, 16) + '…'
     + (job.note ? '：' + job.note : ''), job.actor || '');
 }
 
@@ -2758,4 +2774,252 @@ function freezeLastMonth() {
     ? '［' + m + '］第' + job.version + '版を確定しました: ' + job.pdfUrl
     : '確定できませんでした: ' + ((job && job.message) || '理由不明'));
   return job;
+}
+
+
+/* ############################################################
+   10. 証跡（ハッシュ）と、まとめて渡すZIP
+   ############################################################
+   確定したPDFが「確定した時のまま」かどうかを、あとから確かめられるようにします。
+
+   ・ハッシュ … PDFそのもののSHA-256。中身が1バイトでも変われば変わります
+   ・連鎖    … 1つ前の連鎖とこの行をまとめたSHA-256。
+               台帳の古い行をこっそり書き換えると、それ以降の連鎖が全部合わなくなります
+
+   ここで分かるのは「変わっているかどうか」までです。
+   台帳を編集できる人は、ファイルと一緒にハッシュも書き換えられます。
+   本当の意味での否認防止には、時刻認証局など第三者の記録が要ります。
+   それでも、取り違え・破損・第三者による差し替えはこれで検出できます。
+
+   まとめて渡すときは、確定済みのPDFをそのままZIPにします。
+   PDFを1つに結合しないのは、結合すると別のファイルになってしまい、
+   台帳のハッシュがどれとも一致しなくなるためです。
+   ZIPには、どのPDFが何のハッシュなのかを書いた目録を同梱します。
+   ############################################################ */
+
+/** バイト列を16進の文字列に。computeDigest は符号つきで返すので & 0xFF する */
+function hex_(bytes) {
+  return bytes.map(function (b) {
+    return ('0' + (b & 0xFF).toString(16)).slice(-2);
+  }).join('');
+}
+
+function sha256Bytes_(bytes) {
+  return hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes));
+}
+
+function sha256Text_(text) {
+  return hex_(Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8));
+}
+
+/** 台帳のいちばん下の連鎖。無ければ空(最初の1件) */
+function lastChain_(t) {
+  const tb = t || table_(SH.FIX);
+  if (!tb.rows.length) return '';
+  return String(tb.rows[tb.rows.length - 1]['連鎖'] || '');
+}
+
+/** 1行ぶんの連鎖を作る。1つ前の連鎖を混ぜるので、途中を書き換えると以降が合わなくなる */
+function chainOf_(prev, month, version, at, hash) {
+  const atIso = (at instanceof Date) ? at.toISOString() : String(at);
+  return sha256Text_([prev, month, version, atIso, hash].join('|'));
+}
+
+/**
+ * ★ 手で実行して、確定PDFが確定時のままかを確かめます。
+ *    実行ログに、行ごとの結果が出ます。画面(確定簿)からも呼べます。
+ */
+function verifyFixes() {
+  return guard_('verifyFixes', function () { return verifyFixes_(); });
+}
+
+function verifyFixes_() {
+  const t = table_(SH.FIX);
+  const rows = t.rows;
+  const out = [];
+  let prev = '';
+  let bad = 0;
+
+  rows.forEach(function (r) {
+    const month = String(r['対象月']);
+    const version = Number(r['版']) || 0;
+    const hash = String(r['ハッシュ'] || '');
+    const chain = String(r['連鎖'] || '');
+    const item = { month: month, version: version, name: String(r['ファイル名'] || ''),
+                   alive: String(r['状態'] || '有効') !== '取消',
+                   state: 'ok', detail: '' };
+
+    if (!hash) {
+      item.state = 'none';
+      item.detail = 'ハッシュが記録されていません（この仕組みより前の確定です）';
+    } else {
+      // 1. Driveの実物と突き合わせる
+      let now = '';
+      try {
+        now = sha256Bytes_(DriveApp.getFileById(String(r['ファイルID'])).getBlob().getBytes());
+      } catch (e) {
+        item.state = 'missing';
+        item.detail = 'PDFが見つかりません（消されたか、権限がありません）';
+      }
+      if (item.state === 'ok') {
+        if (now !== hash) {
+          item.state = 'changed';
+          item.detail = 'PDFの中身が確定時と違います';
+        } else {
+          // 2. 台帳そのものが書き換えられていないか
+          const want = chainOf_(prev, month, version, r['確定日時'], hash);
+          if (chain && want !== chain) {
+            item.state = 'broken';
+            item.detail = '台帳の記録が書き換えられています';
+          }
+        }
+      }
+    }
+
+    if (item.state !== 'ok') bad++;
+    out.push(item);
+    prev = chain;
+  });
+
+  const label = { ok: '一致', none: 'ハッシュなし', missing: 'PDFなし',
+                  changed: '中身が変わっている', broken: '台帳が書き換えられている' };
+  console.log('■ 確定PDFの証跡（' + rows.length + ' 件）');
+  out.forEach(function (x) {
+    console.log('   ' + x.month + ' v' + x.version + (x.alive ? '' : '(取消)')
+      + ' … ' + label[x.state] + (x.detail ? ' … ' + x.detail : ''));
+  });
+  console.log('   ────────────────');
+  console.log(bad ? '   ★ ' + bad + ' 件に問題があります' : '   すべて確定時のままです');
+
+  return { total: rows.length, bad: bad, items: out, at: stamp_() };
+}
+
+/**
+ * ★ 手で実行して、ハッシュが無い古い行に後から入れます。
+ *
+ *    注意：後から入れたハッシュが証明するのは「入れた時点のファイル」までです。
+ *    確定した時点のものである保証にはならないので、備考にその旨を残します。
+ */
+function backfillFixHashes() {
+  const t = table_(SH.FIX);
+  let n = 0;
+  let prev = '';
+  t.rows.forEach(function (r) {
+    let hash = String(r['ハッシュ'] || '');
+    const month = String(r['対象月']);
+    const version = Number(r['版']) || 0;
+
+    if (!hash) {
+      try {
+        hash = sha256Bytes_(DriveApp.getFileById(String(r['ファイルID'])).getBlob().getBytes());
+      } catch (e) {
+        console.warn(month + ' v' + version + ' のPDFを読めませんでした');
+        prev = String(r['連鎖'] || '');
+        return;
+      }
+      n++;
+    }
+    const chain = chainOf_(prev, month, version, r['確定日時'], hash);
+    const note = String(r['備考'] || '');
+    writeRow_(t, r._row, {
+      'ハッシュ': hash,
+      '連鎖': chain,
+      '備考': note + (note ? ' / ' : '') + '後からハッシュを記録（' + today_() + '）'
+    });
+    prev = chain;
+  });
+  console.log(n ? n + ' 件にハッシュを入れました' : 'ハッシュの無い行はありませんでした');
+  if (n) audit_('確定台帳にハッシュを追記', n + ' 件', '');
+  return n;
+}
+
+/* ------------------------------------------------------------
+ *  まとめて渡す（ZIP）
+ * ---------------------------------------------------------- */
+
+/** ZIPに入れる目録。どのPDFが何のハッシュなのかを平文で残します */
+function bundleManifest_(items, from, to, actor) {
+  const line = [];
+  line.push(CFG.STORE_NAME + '　業務日報');
+  line.push('対象期間 : ' + from + ' 〜 ' + to);
+  line.push('作成日時 : ' + Utilities.formatDate(new Date(), CFG.TZ, 'yyyy/MM/dd HH:mm'));
+  line.push('作成者   : ' + (actor || '—'));
+  line.push('');
+  line.push('この束は、確定済みのPDFをそのまま集めたものです。');
+  line.push('中身は確定した時点のままで、作り直していません。');
+  line.push('下の SHA-256 で、各PDFが確定時と同じものか確かめられます。');
+  line.push('');
+  line.push('----------------------------------------------------------------');
+  items.forEach(function (x) {
+    line.push('');
+    line.push(x.month + '　第' + x.version + '版');
+    line.push('  確定    : ' + x.at + '　' + (x.by || '—'));
+    line.push('  ファイル: ' + x.name);
+    line.push('  SHA-256 : ' + (x.hash || '（記録なし）'));
+    if (x.note) line.push('  備考    : ' + x.note);
+  });
+  line.push('');
+  line.push('----------------------------------------------------------------');
+  line.push('確認のしかた（Windows の PowerShell）');
+  line.push('  Get-FileHash .\\ファイル名.pdf -Algorithm SHA256');
+  line.push('');
+  // Windowsのメモ帳で開いても文字化けしないよう、BOM付きUTF-8・CRLFにする
+  return Utilities.newBlob('﻿' + line.join('\r\n'), 'text/plain', '目録.txt');
+}
+
+/**
+ * 期間ぶんの確定PDFを1つのZIPにまとめる。
+ *
+ * PDFを作り直さないので、待ち時間はファイルを読むぶんだけです。
+ * 各月は、取り消されていない最新の版を入れます。
+ *
+ * @param {Object} p { from:'2026-04', to:'2026-06', actor:'…' }
+ */
+function bundleFixes(p) {
+  return guard_('bundleFixes', function () {
+    const from = String(p.from || '').slice(0, 7);
+    const to = String(p.to || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) {
+      throw new Error('対象月が正しくありません');
+    }
+    if (from > to) throw new Error('開始の月が終わりの月より後になっています');
+
+    const all = fixList_();
+    const picked = [];
+    const seen = {};
+    all.forEach(function (x) {
+      if (!x.alive || x.month < from || x.month > to) return;
+      if (seen[x.month]) return;      // fixList_ は版の新しい順なので、最初のものが最新
+      seen[x.month] = true;
+      picked.push(x);
+    });
+    if (!picked.length) throw new Error('この期間に確定済みの月がありません');
+    if (picked.length > 36) throw new Error('一度にまとめられるのは36か月までです');
+
+    picked.sort(function (a, b) { return a.month < b.month ? -1 : 1; });
+
+    const blobs = [bundleManifest_(picked, from, to, p.actor)];
+    picked.forEach(function (x) {
+      const blob = DriveApp.getFileById(x.fileId).getBlob();
+      blobs.push(blob.setName(x.name));
+    });
+
+    const name = from + '_' + to + '_業務日報_'
+      + Utilities.formatDate(new Date(), CFG.TZ, 'yyyyMMdd');
+    const zip = Utilities.zip(blobs, name + '.zip');
+    const file = outFolder_().createFile(zip);
+
+    audit_('確定PDFをまとめて出力',
+      from + ' 〜 ' + to + '（' + picked.length + 'か月）', p.actor || '');
+
+    return {
+      name: file.getName(),
+      url: file.getUrl(),
+      months: picked.length,
+      items: picked.map(function (x) {
+        return { month: x.month, version: x.version, name: x.name, hash: x.hash };
+      })
+    };
+  });
 }
