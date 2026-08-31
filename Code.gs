@@ -423,12 +423,45 @@ const TEXT_COLS = [
 /** 上の一覧をまとめて文字列書式にする。直したものの名前を返します */
 function textColumns_() {
   const done = [];
+  const sized = {};
   TEXT_COLS.forEach(function (x) {
     if (!ss_().getSheetByName(x[0])) return;
+    if (!sized[x[0]]) { sized[x[0]] = true; ensureRowRoom_(x[0]); }
     formatTextColumn_(x[0], x[1]);
     done.push(x[0] + '.' + x[1]);
   });
   return done;
+}
+
+/** 空き行がこれを下回ったら足す / 一度に足す行数 */
+const ROW_ROOM = { MIN_FREE: 400, ADD: 2000 };
+
+/**
+ * 書式を付ける前に、行の空きを確かめる。
+ *
+ * 表示形式は「いまある行」にしか付きません。日報DBは1日1行増えるので、
+ * 作ったままの1000行だと3年ほどで書式の外へ出ます。そこから先の行が
+ * 書式を引き継ぐかどうかは環境しだいなので、引き継がなくても困らないように、
+ * 空きが少なくなったら先に行を足しておきます。
+ * (行を足すだけで、中身には触りません)
+ */
+function ensureRowRoom_(sheetName) {
+  const sh = ss_().getSheetByName(sheetName);
+  if (!sh) return 0;
+  const max = sh.getMaxRows();
+  const free = max - sh.getLastRow();
+  if (free >= ROW_ROOM.MIN_FREE) return 0;
+
+  sh.insertRowsAfter(max, ROW_ROOM.ADD);
+  console.log('シート「' + sheetName + '」に ' + ROW_ROOM.ADD + ' 行を足しました'
+    + '（空きが ' + free + ' 行になっていました）');
+  return ROW_ROOM.ADD;
+}
+
+/** あと何行書けるか。version() で知らせます */
+function rowRoomOf_(sheetName) {
+  const sh = ss_().getSheetByName(sheetName);
+  return sh ? sh.getMaxRows() - sh.getLastRow() : 0;
 }
 
 /**
@@ -1518,6 +1551,16 @@ function version() {
   });
   say('   ［' + T_().SHEET + '］'
     + (ss_().getSheetByName(T_().SHEET) ? 'あります' : 'ありません'));
+
+  // 文字列書式は「いまある行」にしか付かないので、空きが尽きる前に知らせる
+  say('');
+  say('■ 行の空き');
+  [SH.DAILY, SH.XFER, SH.FIX].forEach(function (n) {
+    if (!ss_().getSheetByName(n)) return;
+    const free = rowRoomOf_(n);
+    say('   ［' + n + '］あと ' + free + ' 行'
+      + (free < ROW_ROOM.MIN_FREE ? '　★ updateDatabase を実行して足してください' : ''));
+  });
 
   const legacy = LEGACY_XFER_COLS.filter(function (c) {
     const sh = ss_().getSheetByName(SH.DAILY);
