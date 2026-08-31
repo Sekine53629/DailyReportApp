@@ -66,11 +66,27 @@ const CFG = {
   LOCK_MINUTES: 10,
 
   /** 押印のきまり
+   *
    *  ADMIN_EVERY_DAY … 管理者印は、その日に在任している管理薬剤師の印影を
-   *                    承認の有無にかかわらず毎日入れる
-   *  false にすると、承認済みの日だけに印影が入ります */
+   *                    承認の有無にかかわらず毎日入れる。
+   *                    false にすると、承認済みの日だけに印影が入ります。
+   *
+   *  SKIP_EMPTY_DAYS … 記録が1つも無い日には管理者印を押さない。
+   *                    白紙の行に押印があると「無い記録を確認した」ことに
+   *                    なってしまうため、既定で true にしています。
+   *                    出力も速くなります(押す枚数が減るので)。
+   *
+   *  REUSE_ADMIN_STAMP … 印影を1コマずつ押すのではなく、押し終えた
+   *                    下ごしらえのシートを複製して引き継ぐ。
+   *                    印影の貼り付けは1枚ずつシートと往復するため、
+   *                    ここが出力時間のほとんどを占めています。
+   *                    複製で画像が引き継がれるかは環境しだいなので、
+   *                    出力のはじめに1度だけ確かめ、駄目なら自動で
+   *                    1コマずつ押す方式に戻ります。 */
   SEAL_POLICY: {
-    ADMIN_EVERY_DAY: true
+    ADMIN_EVERY_DAY: true,
+    SKIP_EMPTY_DAYS: true,
+    REUSE_ADMIN_STAMP: true
   },
 
   /** 帳票テンプレートの作り。
@@ -1514,7 +1530,11 @@ function xferLine_(d) {
 /** 管理者印に押す人。設定により、承認前でもその日の管理薬剤師を押す */
 function sealOwnerAdmin_(d) {
   if (d.admin) return d.admin;
-  return CFG.SEAL_POLICY.ADMIN_EVERY_DAY ? d.chief : '';
+  if (!CFG.SEAL_POLICY.ADMIN_EVERY_DAY) return '';
+  // 記録が1つも無い日に押すと、白紙の行に押印が載ってしまう
+  const filled = d.state !== 'empty' && d.state !== 'editing';
+  if (!filled && CFG.SEAL_POLICY.SKIP_EMPTY_DAYS) return '';
+  return d.chief;
 }
 
 function outOfRange_(v, range) {
@@ -1544,14 +1564,35 @@ function stampGeometry_(tpl) {
   return { colW: colW, rowH: rowH };
 }
 
-function renderWeekSheet_(target, startIso, rows, seals, geo, tpl) {
+/**
+ * 1週間ぶんを流し込む。
+ *
+ * 値の書き込みと印影の貼り付けを分けてあります。
+ * 印影は1枚ずつシートと往復し、しかも保留していた書き込みを
+ * その場で反映させるため、混ぜて書くと値の反映が日数ぶんに分断されます。
+ * 先に値をぜんぶ書いて1回で反映させ、そのあと印影を貼ります。
+ *
+ * @param {Object}  done      複製元で押し済みか {adminDone, staffDone}
+ * @param {Object}  timing    渡すと、処理ごとの所要時間(ミリ秒)を書き込みます
+ */
+function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing) {
+  const adminDone = !!(done && done.adminDone);
+  const staffDone = !!(done && done.staffDone);
   const t = T_();
+  const R = CFG.RANGES;
+  const mark = function (key, from) {
+    if (timing) timing[key] = (timing[key] || 0) + (Date.now() - from);
+  };
+
+  /* ---- 1. テンプレートを複製する ---- */
+  let t0 = Date.now();
   const sh = (tpl || templateSheet_()).copyTo(target);
   sh.setName(startIso);
   sh.showSheet();
+  mark('copy', t0);
 
-  const R = CFG.RANGES;
-
+  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ---- */
+  t0 = Date.now();
   rows.forEach(function (r, i) {
     const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
     const r2 = r1 + 1;
@@ -1576,10 +1617,6 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl) {
     if (outOfRange_(r.roomHumid, R.ROOM_HUMID)) redCell_(sh, r1, t.COL.ROOM_H);
     if (outOfRange_(r.coldTemp,  R.COLD_TEMP))  redCell_(sh, r1, t.COL.COLD_T);
     if (outOfRange_(r.coldHumid, R.COLD_HUMID)) redCell_(sh, r1, t.COL.COLD_H);
-
-    // 印影。Blobは呼び出し元で1回だけ読んであるので、ここではDriveを叩かない
-    stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin], geo);
-    stampCell_(sh, r1, t.COL.STAFF, seals[r.staff], geo);
   });
 
   // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
@@ -1589,7 +1626,114 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl) {
     .setBorder(true, true, true, true, null, null,
                t.RULE, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
 
+  SpreadsheetApp.flush();          // ここまでを1回で反映させる
+  mark('values', t0);
+
+  /* ---- 3. 印影を貼る(ここが出力時間のほとんど) ---- */
+  t0 = Date.now();
+  let n = 0;
+  rows.forEach(function (r, i) {
+    const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
+    if (!adminDone && stampCell_(sh, r1, t.COL.ADMIN, seals[r.admin], geo)) n++;
+    if (!staffDone && stampCell_(sh, r1, t.COL.STAFF, seals[r.staff], geo)) n++;
+  });
+  mark('seals', t0);
+  if (timing) timing.sealCount = (timing.sealCount || 0) + n;
+
   return sh;
+}
+
+/**
+ * 管理者印を押し終えた「下ごしらえのシート」を作って使い回す。
+ *
+ * 管理者印はその週の7日ぶんが同じ並びになることがほとんどです。
+ * 1コマずつ押すと1週あたり7枚ぶん往復しますが、押し終えたシートを
+ * 複製すれば、2週目からは0枚で済みます。
+ *
+ * 複製で画像が引き継がれるかは環境しだいなので、最初に1度だけ
+ * 実際に複製して確かめ、駄目なら1コマずつ押す方式に戻します。
+ */
+/**
+ * その週の押印の並び。同じ並びなら、押し終えたシートを使い回せます。
+ *
+ * 押す場所は曜日で決まっている(1日目は3行目、2日目は5行目…)ので、
+ * 「誰の印がどの位置に来るか」は名前を並べただけで言い表せます。
+ *
+ *   admin … 管理者印の並びだけ。管理薬剤師は交代しない限り毎日同じ
+ *   full  … 担当者印もあわせた並び。曜日ごとの担当が毎週同じなら一致する
+ */
+function sealKeys_(rows) {
+  const a = rows.map(function (r) { return r.admin || ''; }).join('|');
+  const b = rows.map(function (r) { return r.staff || ''; }).join('|');
+  return { admin: a, full: a + '#' + b };
+}
+
+/**
+ * 押印を済ませた「下ごしらえのシート」を作って使い回す。
+ *
+ * 印影の貼り付けは1枚ずつシートと往復するため、ここが出力時間のほとんどです。
+ * 押す位置は曜日で決まっているので、同じ並びの週なら押し終えたシートを
+ * 複製するだけで済みます。
+ *
+ *   ・担当者印まで一致する週があるなら、1週ぶん14枚を丸ごと引き継ぐ
+ *   ・そこまで一致しなくても、管理者印7枚だけは引き継げることが多い
+ *
+ * 1度しか出てこない並びには作りません(複製1回ぶん損になるため)。
+ * 複製で画像が引き継がれるかは環境しだいなので、最初に1枚だけ押して
+ * 確かめ、駄目なら1コマずつ押す方式へ自動で戻ります。
+ */
+function sealBase_(temp, tpl, rows, seals, geo, cache) {
+  const none = { sheet: tpl, adminDone: false, staffDone: false };
+  if (!cache.ok) return none;
+
+  const k = sealKeys_(rows);
+
+  // すでに作ってあるものを優先する
+  if (cache.map[k.full])  return { sheet: cache.map[k.full],  adminDone: true, staffDone: true };
+  if (cache.map[k.admin]) return { sheet: cache.map[k.admin], adminDone: true, staffDone: false };
+
+  // 担当者印まで一致する週が2回以上あるなら、そちらで作る
+  const withStaff = (cache.count[k.full] || 0) >= 2;
+  const key = withStaff ? k.full : k.admin;
+  if (!withStaff && (cache.count[k.admin] || 0) < 2) return none;
+
+  const t = T_();
+  const rowAt = function (i) { return t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY; };
+
+  // 押す順番を先に組み立てる。押すものが無いなら下ごしらえの意味がない
+  const plan = [];
+  rows.forEach(function (r, i) {
+    if (seals[r.admin]) plan.push({ i: i, at: t.COL.ADMIN, blob: seals[r.admin] });
+    if (withStaff && seals[r.staff]) plan.push({ i: i, at: t.COL.STAFF, blob: seals[r.staff] });
+  });
+  if (!plan.length) return none;
+
+  const base = tpl.copyTo(temp);
+  base.setName('_b' + Utilities.getUuid().slice(0, 8));
+
+  // まず1枚だけ押して、複製で引き継がれるか確かめる(無駄打ちを1枚に抑える)
+  stampCell_(base, rowAt(plan[0].i), plan[0].at, plan[0].blob, geo);
+
+  if (!cache.checked) {
+    cache.checked = true;
+    const probe = base.copyTo(temp);
+    const kept = probe.getImages().length;
+    temp.deleteSheet(probe);
+    if (!kept) {
+      console.warn('複製では印影が引き継がれないため、1コマずつ押す方式に切り替えます');
+      cache.ok = false;
+      temp.deleteSheet(base);
+      return none;
+    }
+  }
+
+  for (let n = 1; n < plan.length; n++) {
+    stampCell_(base, rowAt(plan[n].i), plan[n].at, plan[n].blob, geo);
+  }
+  base.hideSheet();
+
+  cache.map[key] = base;
+  return { sheet: base, adminDone: true, staffDone: withStaff };
 }
 
 /** 数値を入れて表示形式を合わせる。値が無い日はテンプレートのまま残す */
@@ -1608,7 +1752,7 @@ function redCell_(sh, row, col) {
 /** セルの中央に印影を置く。
  *  列幅・行の高さはシートから読むので、テンプレートを直しても中央のままです */
 function stampCell_(sh, row, col, blob, geo) {
-  if (!blob) return;
+  if (!blob) return false;
   // 寸法は stampGeometry_ で先に読んである。無いときだけその場で読む
   const cw = (geo && geo.colW[col]) || sh.getColumnWidth(col);
   const ch = (geo && geo.rowH[row]) || sh.getRowHeight(row);
@@ -1617,6 +1761,7 @@ function stampCell_(sh, row, col, blob, geo) {
                              Math.round((cw - size) / 2),
                              Math.round((ch - size) / 2));
   img.setWidth(size).setHeight(size);
+  return true;
 }
 
 /* ============================================================
@@ -1721,11 +1866,22 @@ function runExportChunk() {
     const tpl = templateSheet_();          // テンプレートの引き直しも1回に
     const geo = stampGeometry_(tpl);       // 印影を置く寸法も1回に
 
+    // 管理者印を押し終えた下ごしらえシート。同じ並びの週で使い回す。
+    // どの並びが何回出るかを先に数えておき、2回以上のものだけ用意します
+    // (1回きりなら、下ごしらえの複製ぶんだけ損になるため)
+    const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
+    for (let i = job.done; i < job.weeks.length; i++) {
+      const k = sealKeys_(weekRows_(job.weeks[i], idx, terms));
+      base.count[k.admin] = (base.count[k.admin] || 0) + 1;
+      base.count[k.full]  = (base.count[k.full]  || 0) + 1;
+    }
+
     try {
       while (job.done < job.weeks.length && Date.now() - t0 < PRINT.TIME_BUDGET_MS) {
         const w = job.weeks[job.done];
         const rows = weekRows_(w, idx, terms);
-        renderWeekSheet_(temp, w, rows, seals, geo, tpl);
+        const b = sealBase_(temp, tpl, rows, seals, geo, base);
+        renderWeekSheet_(temp, w, rows, seals, geo, b.sheet, b);
         job.done++;
         PROP.setProperty(PRINT.JOB_KEY, JSON.stringify(job));
       }
@@ -1782,8 +1938,10 @@ function trashTemp_(job) {
 /** すべての週が終わったらPDFにして、一時ファイルを片づける */
 function finishExport_(job, temp) {
   try {
-    const first = temp.getSheetByName('_');
-    if (first) temp.deleteSheet(first);
+    // 既定のシートと、下ごしらえ用のシート(_で始まる)をすべて消す
+    temp.getSheets().forEach(function (x) {
+      if (String(x.getName()).charAt(0) === '_') temp.deleteSheet(x);
+    });
     SpreadsheetApp.flush();
 
     const pdf = exportPdf_(job.tempId, job.title);
@@ -1834,6 +1992,76 @@ function printFit_() {
     fits: (w + cfg.EDGE_GAP_PX <= availW) && (h + cfg.EDGE_GAP_PX <= availH),
     scale: Math.min(1, availW / w)
   };
+}
+
+/**
+ * ★ 手で実行して、出力のどこに時間がかかっているかを測ります。
+ *    1週間ぶんだけ作って、複製・値の書き込み・印影に分けて出します。
+ *    速くしたいときは、まずこれで当たりを付けてください。
+ */
+function benchmarkExport() {
+  const idx = dailyIndex_();
+  const terms = termList_();
+  const tpl = templateSheet_();
+  const start = addDays_(weekStart_(today_()), -7);   // 先週(記録がある想定)
+
+  let t0 = Date.now();
+  const seals = sealBlobMap_();
+  const tSeals = Date.now() - t0;
+
+  t0 = Date.now();
+  const geo = stampGeometry_(tpl);
+  const tGeo = Date.now() - t0;
+
+  t0 = Date.now();
+  const temp = SpreadsheetApp.create('_ベンチマーク_' + stamp_());
+  const tCreate = Date.now() - t0;
+
+  try {
+    const rows = weekRows_(start, idx, terms);
+    const timing = {};
+    const base = { ok: !!CFG.SEAL_POLICY.REUSE_ADMIN_STAMP, checked: false, map: {}, count: {} };
+    const k = sealKeys_(rows);
+    base.count[k.admin] = 2;           // 実際の出力では使い回す前提で測る
+    base.count[k.full]  = 2;
+
+    t0 = Date.now();
+    const b = sealBase_(temp, tpl, rows, seals, geo, base);
+    const tBase = Date.now() - t0;
+
+    renderWeekSheet_(temp, start, rows, seals, geo, b.sheet, b, timing);
+    SpreadsheetApp.flush();
+
+    const total = tSeals + tGeo + tCreate + tBase
+      + (timing.copy || 0) + (timing.values || 0) + (timing.seals || 0);
+    const pct = function (ms) { return Math.round(ms / total * 100) + '%'; };
+    const line = function (label, ms) {
+      console.log('   ' + label + ' … ' + (ms / 1000).toFixed(1) + '秒 (' + pct(ms) + ')');
+    };
+
+    console.log('■ 1週間ぶんの内訳（' + start + ' の週）');
+    line('印影をDriveから読む  ', tSeals);
+    line('テンプレートの寸法   ', tGeo);
+    line('一時ファイルを作る   ', tCreate);
+    line('管理者印の下ごしらえ ', tBase);
+    line('テンプレートの複製   ', timing.copy || 0);
+    line('値の書き込み         ', timing.values || 0);
+    line('印影を貼る           ', timing.seals || 0);
+    console.log('   ────────────────────────');
+    console.log('   合計 ' + (total / 1000).toFixed(1) + '秒');
+    console.log('');
+    console.log('■ この週で貼った印影 ' + (timing.sealCount || 0) + ' 枚'
+      + (b.staffDone ? '（担当者印・管理者印とも下ごしらえから引き継ぎ）'
+        : b.adminDone ? '（管理者印は下ごしらえから引き継ぎ）' : '（1コマずつ）'));
+    console.log('');
+    console.log('■ 2週目からの見込み');
+    console.log('   下ごしらえと一時ファイルの作成は1回だけなので、'
+      + ((((timing.copy || 0) + (timing.values || 0) + (timing.seals || 0))) / 1000).toFixed(1)
+      + '秒/週 が目安です');
+    return timing;
+  } finally {
+    try { DriveApp.getFileById(temp.getId()).setTrashed(true); } catch (e) { /* 既に無い */ }
+  }
 }
 
 /**
