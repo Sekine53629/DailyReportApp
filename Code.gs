@@ -1595,8 +1595,22 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing)
   sh.showSheet();
   mark('copy', t0);
 
-  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ---- */
+  /* ---- 2. 値をぜんぶ書く(まとめて1回で反映させる) ----
+   *
+   *  セルを1つずつ書かず、隣り合う列をまとめて setValues で書きます。
+   *  まとめられるのは結合されていない範囲だけなので、次の2かたまりです。
+   *    B〜E … 処方箋枚数・疑義照会と、その単位
+   *    G〜J … 調剤室と冷所の温湿度
+   *  日付(A)は2行ぶち抜き、管理に関する事項(下段B〜L)も結合されているので、
+   *  こちらは左上のセルに1つずつ書きます。 */
   t0 = Date.now();
+  const keepBlank = t.KEEP_BLANK_PLACEHOLDER;
+  // 値が無いときは、テンプレートの下地(℃　/ や %)をそのまま書き戻す
+  const orBlank = function (v, ph) {
+    if (v !== null && v !== undefined && v !== '') return v;
+    return keepBlank ? ph : '';
+  };
+
   rows.forEach(function (r, i) {
     const r1 = t.HEAD_ROWS + 1 + i * t.ROWS_PER_DAY;
     const r2 = r1 + 1;
@@ -1605,22 +1619,39 @@ function renderWeekSheet_(target, startIso, rows, seals, geo, tpl, done, timing)
     sh.getRange(r1, t.COL.DATE).setValue(
       r.date.replace(/-/g, '/') + '\n' + r.dow + '\n' + r.hours);
 
-    // 数値。単位は表示形式で付くので、値は数値のまま入れる
-    putNum_(sh, r1, t.COL.RX,     r.filled ? r.rx : null,  t.FMT.RX);
-    putNum_(sh, r1, t.COL.INQ,    r.filled ? r.inquiry : null, t.FMT.INQ);
-    putNum_(sh, r1, t.COL.ROOM_T, r.roomTemp,  t.FMT.TEMP);
-    putNum_(sh, r1, t.COL.ROOM_H, r.roomHumid, t.FMT.HUMID);
-    putNum_(sh, r1, t.COL.COLD_T, r.coldTemp,  t.FMT.TEMP);
-    putNum_(sh, r1, t.COL.COLD_H, r.coldHumid, t.FMT.HUMID);
+    // 処方箋枚数・疑義照会と、その単位(B〜E)。
+    // 単位はテンプレートと同じ文字を書き戻すので、見た目は変わりません
+    sh.getRange(r1, t.COL.RX, 1, t.COL.INQ + 1 - t.COL.RX + 1)
+      .setValues([[
+        orBlank(r.filled ? r.rx : null, ''), t.UNIT_TEXT.RX,
+        orBlank(r.filled ? r.inquiry : null, ''), t.UNIT_TEXT.INQ
+      ]])
+      .setNumberFormats([[t.FMT.RX, '@', t.FMT.INQ, '@']]);
+
+    // 温湿度(G〜J)
+    const temp = sh.getRange(r1, t.COL.ROOM_T, 1, t.COL.COLD_H - t.COL.ROOM_T + 1);
+    temp.setValues([[
+      orBlank(r.roomTemp,  t.PLACEHOLDER.TEMP),
+      orBlank(r.roomHumid, t.PLACEHOLDER.HUMID),
+      orBlank(r.coldTemp,  t.PLACEHOLDER.TEMP),
+      orBlank(r.coldHumid, t.PLACEHOLDER.HUMID)
+    ]]).setNumberFormats([[t.FMT.TEMP, t.FMT.HUMID, t.FMT.TEMP, t.FMT.HUMID]]);
+
+    // 管理基準を外れた値は赤字にする(逸脱を目立たせるため)。
+    // 逸脱が1つも無い日は、テンプレートの書式のまま触りません
+    const bad = [
+      outOfRange_(r.roomTemp,  R.ROOM_TEMP),
+      outOfRange_(r.roomHumid, R.ROOM_HUMID),
+      outOfRange_(r.coldTemp,  R.COLD_TEMP),
+      outOfRange_(r.coldHumid, R.COLD_HUMID)
+    ];
+    if (bad.some(function (x) { return x; })) {
+      temp.setFontColors([bad.map(function (x) { return x ? ALERT_RED : '#000000'; })])
+          .setFontWeights([bad.map(function (x) { return x ? 'bold' : 'normal'; })]);
+    }
 
     // 下段。管理に関する事項(B〜Lが結合されている)
     if (r.note) sh.getRange(r2, t.COL.NOTE).setValue(r.note);
-
-    // 管理基準を外れた値は赤字にする(逸脱を目立たせるため)
-    if (outOfRange_(r.roomTemp,  R.ROOM_TEMP))  redCell_(sh, r1, t.COL.ROOM_T);
-    if (outOfRange_(r.roomHumid, R.ROOM_HUMID)) redCell_(sh, r1, t.COL.ROOM_H);
-    if (outOfRange_(r.coldTemp,  R.COLD_TEMP))  redCell_(sh, r1, t.COL.COLD_T);
-    if (outOfRange_(r.coldHumid, R.COLD_HUMID)) redCell_(sh, r1, t.COL.COLD_H);
   });
 
   // いちばん外側の罫線は、PDFにすると切り取り線の真上に来て削られます
@@ -1740,18 +1771,8 @@ function sealBase_(temp, tpl, rows, seals, geo, cache) {
   return { sheet: base, adminDone: true, staffDone: withStaff };
 }
 
-/** 数値を入れて表示形式を合わせる。値が無い日はテンプレートのまま残す */
-function putNum_(sh, row, col, v, fmt) {
-  if (v === null || v === undefined || v === '') {
-    if (!T_().KEEP_BLANK_PLACEHOLDER) sh.getRange(row, col).clearContent();
-    return;
-  }
-  sh.getRange(row, col).setNumberFormat(fmt).setValue(v);
-}
-
-function redCell_(sh, row, col) {
-  sh.getRange(row, col).setFontColor('#c42a26').setFontWeight('bold');
-}
+/** 管理基準を外れた値の文字色 */
+const ALERT_RED = '#c42a26';
 
 /** セルの中央に印影を置く。
  *  列幅・行の高さはシートから読むので、テンプレートを直しても中央のままです */
