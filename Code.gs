@@ -191,6 +191,8 @@ function setup() {
   Logger.log('シートを用意しました: ' + [SH.DAILY, SH.STAFF, SH.TERM, SH.LOG].join(' / '));
   Logger.log('印影フォルダ: ' + CFG.SEAL_FOLDER_NAME + '(共有しないでください)');
   Logger.log('');
+  Logger.log('列が足りているかは、いつでも checkSheets で確かめられます。');
+  Logger.log('');
   Logger.log('次に「デプロイ > 新しいデプロイ > 種類:ウェブアプリ」を実行してください。');
   Logger.log('  次のユーザーとして実行 : ' +
     (CFG.AUTH_MODE === 'google' ? 'アクセスしているユーザー' : '自分'));
@@ -205,12 +207,11 @@ function ensureSheet_(name, cols) {
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
 
-  const lastCol = Math.max(sh.getLastColumn(), 1);
-  const head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  const head = headerOf_(sh);
 
   // 足りない見出しだけ右に足す(既存データは動かさない)
   const missing = cols.filter(function (c) { return head.indexOf(c) < 0; });
-  if (head.join('') === '') {
+  if (!head.length) {
     sh.getRange(1, 1, 1, cols.length).setValues([cols]);
   } else if (missing.length) {
     sh.getRange(1, head.length + 1, 1, missing.length).setValues([missing]);
@@ -220,6 +221,84 @@ function ensureSheet_(name, cols) {
   sh.getRange(1, 1, 1, sh.getLastColumn())
     .setFontWeight('bold').setBackground('#e8eaed');
   return sh;
+}
+
+/* ------------------------------------------------------------
+ *  列の過不足をなくす
+ *
+ *  シートへの書き込みは「見出し行にある列」だけを対象にしています。
+ *  そのため、あとから COLS に項目を足しただけでは、古いシートに
+ *  その列が無く、書いた値が黙って捨てられてしまいます。
+ *  （管理に関する事項の8列がこれにあたりました）
+ *
+ *  そこで、読み書きの前に必ず列をそろえます。1回の実行のあいだは
+ *  結果を覚えておくので、シートを何度読んでも確認は1回だけです。
+ * ---------------------------------------------------------- */
+
+/** シート名 → あるべき列 */
+const SHEET_COLS = {};
+SHEET_COLS[SH.DAILY] = COLS.DAILY;
+SHEET_COLS[SH.STAFF] = COLS.STAFF;
+SHEET_COLS[SH.TERM]  = COLS.TERM;
+SHEET_COLS[SH.LOG]   = COLS.LOG;
+
+/** この実行で確認済みのシート */
+const SCHEMA_CHECKED = {};
+
+/** 見出し行。末尾の空セルは見出しではないので落とす */
+function headerOf_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), 1);
+  const raw = sh.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
+  let width = raw.length;
+  while (width > 0 && raw[width - 1] === '') width--;
+  return raw.slice(0, width);
+}
+
+/** 足りていない列を返す */
+function missingColumns_(name, cols) {
+  const sh = ss_().getSheetByName(name);
+  if (!sh) return cols.slice();
+  const head = headerOf_(sh);
+  return cols.filter(function (c) { return head.indexOf(c) < 0; });
+}
+
+/** 足りない列があれば足す。シートが無いときは何もしない(table_ 側で知らせる) */
+function ensureColumns_(name) {
+  if (SCHEMA_CHECKED[name]) return;
+  const cols = SHEET_COLS[name];
+  if (!cols) { SCHEMA_CHECKED[name] = true; return; }
+  if (!ss_().getSheetByName(name)) return;
+
+  const missing = missingColumns_(name, cols);
+  SCHEMA_CHECKED[name] = true;          // 履歴を書く前に立てる(呼び戻りを避ける)
+  if (!missing.length) return;
+
+  ensureSheet_(name, cols);
+  console.log('シート「' + name + '」に列を追加しました: ' + missing.join('、'));
+  audit_('シートの列を自動追加', name + '：' + missing.join('、'), '');
+}
+
+/**
+ * ★ 手で実行して、シートの列がそろっているかを確かめます。
+ *    足りない列はその場で追加します。実行ログに結果が出ます。
+ */
+function checkSheets() {
+  Object.keys(SHEET_COLS).forEach(function (name) {
+    const cols = SHEET_COLS[name];
+    if (!ss_().getSheetByName(name)) {
+      console.log('［' + name + '］シートがありません。setup を実行してください');
+      return;
+    }
+    const missing = missingColumns_(name, cols);
+    if (!missing.length) {
+      console.log('［' + name + '］そろっています（' + cols.length + '列）');
+      return;
+    }
+    ensureSheet_(name, cols);
+    console.log('［' + name + '］列を追加しました: ' + missing.join('、'));
+  });
+  console.log('確認おわり');
 }
 
 function formatTextColumn_(sheetName, colName) {
@@ -234,6 +313,7 @@ function formatTextColumn_(sheetName, colName) {
  * 各行に _row(実際の行番号)が入るので、そのまま書き戻せます。
  */
 function table_(name) {
+  ensureColumns_(name);                 // 読む前に列をそろえる
   const sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('シートがありません: ' + name + '（setup() を実行してください）');
 
@@ -250,8 +330,23 @@ function table_(name) {
   return { sh: sh, header: header, rows: rows };
 }
 
+/**
+ * 見出しに無いキーを書こうとしていないか確かめる。
+ * ここを素通りさせると、値が保存されないのに成功したように見えてしまいます。
+ */
+function assertColumns_(t, patch) {
+  const unknown = Object.keys(patch).filter(function (k) {
+    return t.header.indexOf(k) < 0;
+  });
+  if (unknown.length) {
+    throw new Error('シート「' + t.sh.getName() + '」に次の列がありません: '
+      + unknown.join('、') + '。スクリプトエディタで checkSheets を実行してください');
+  }
+}
+
 /** 見出し名で指定した値だけを1行にまとめて書く(1回のsetValuesで済ませる) */
 function writeRow_(t, row, patch) {
+  assertColumns_(t, patch);
   const width = t.header.length;
   const cur = t.sh.getRange(row, 1, 1, width).getValues()[0];
   t.header.forEach(function (h, j) {
@@ -262,6 +357,7 @@ function writeRow_(t, row, patch) {
 
 /** 末尾に1行追加して、その行番号を返す */
 function appendRow_(t, patch) {
+  assertColumns_(t, patch);
   const rowValues = t.header.map(function (h) {
     return patch.hasOwnProperty(h) ? patch[h] : '';
   });
