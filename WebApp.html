@@ -91,15 +91,21 @@ button,input,select{font:inherit;color:inherit}
 /* ============================================================
    骨格 ― スマホは1カラム、PCは「週の状況 / 入力」の2カラム
    ============================================================ */
-.shell{max-width:1040px;margin:0 auto;padding:0 14px 40px}
+.shell{max-width:1040px;margin:0 auto;padding:16px 14px 40px}
 
+/* 画面の切り替えバー。本文の外に置いてあるので、どの画面を出していても
+   上に貼り付いたままになる。中に入れると、記録簿や確定簿では本文が短く、
+   少しスクロールしただけでバーごと流れて消えてしまう。 */
 .topbar{
-  /* sticky なので、中の .pickme はこのバーを基準に置ける */
-  position:sticky;top:0;z-index:20;
-  background:color-mix(in srgb, var(--ground) 86%, transparent);
+  position:sticky;top:0;z-index:30;
+  background:color-mix(in srgb, var(--ground) 88%, transparent);
   backdrop-filter:saturate(1.4) blur(8px);
   border-bottom:1px solid var(--line);
-  margin:0 -14px 16px;padding:10px 14px;
+}
+/* sticky なので、中の .pickme はこのバーを基準に置ける */
+.tb-in{
+  position:relative;
+  max-width:1200px;margin:0 auto;padding:10px 14px;
   display:flex;align-items:center;gap:10px;
 }
 .brand{display:flex;flex-direction:column;line-height:1.25;min-width:0}
@@ -441,16 +447,8 @@ button,input,select{font:inherit;color:inherit}
 }
 
 /* ============================================================
-   担当者の管理(モーダル)
+   名簿と管理薬剤師の画面、および入力用のモーダル
    ============================================================ */
-.iconbtn{
-  flex:0 0 auto;width:36px;height:36px;border-radius:50%;
-  border:1px solid var(--line);background:var(--surface);box-shadow:var(--shadow);
-  display:grid;place-items:center;cursor:pointer;padding:0;
-}
-.iconbtn svg{width:18px;height:18px;stroke:var(--ink-2);fill:none;stroke-width:1.7}
-.iconbtn:hover{border-color:var(--line-strong)}
-
 .overlay{
   position:fixed;inset:0;z-index:50;display:none;
   background:rgba(10,20,17,.45);
@@ -472,6 +470,7 @@ button,input,select{font:inherit;color:inherit}
 }
 .sheet-hd h2{font-family:var(--disp);font-weight:700;font-size:16px;margin:0;flex:1}
 .sheet-bd{padding:16px 18px}
+#viewStaff .card{overflow:visible}
 
 /* 名簿の行 */
 .mrow{
@@ -542,7 +541,7 @@ button,input,select{font:inherit;color:inherit}
 
 /* ---- 管理画面のタブ ---- */
 .tabs{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line);
-  position:sticky;top:52px;background:var(--surface);z-index:2}
+  background:var(--surface)}
 .tab{
   border:0;background:none;padding:9px 12px 8px;cursor:pointer;
   font-family:var(--disp);font-weight:700;font-size:13px;color:var(--muted);
@@ -694,9 +693,10 @@ table.pv td.st span{font-size:6.5px;color:#3d4a45;display:block}
    ============================================================ */
 .lgview[hidden]{display:none}
 .lgview{max-width:1200px;margin:0 auto;padding:0 14px 60px}
+.lgview.narrow{max-width:720px}
 
 .lg-bar{
-  position:sticky;top:0;z-index:25;
+  position:sticky;top:var(--tbh, 58px);z-index:25;
   display:flex;align-items:center;gap:8px;flex-wrap:wrap;
   margin:0 -14px 14px;padding:10px 14px;
   background:color-mix(in srgb, var(--ground) 88%, transparent);
@@ -878,7 +878,7 @@ table.pv td.st i.pend{
 @media print{
   /* 画面のための部品は紙に出さない */
   .topbar,.lg-bar,.lg-stats,.lg-alerts,.lg-fix,.lg-note,.cols,.overlay,.toast,
-  #boot,#demoBar,.footnote,.actions,.jobbar,#viewExport{display:none !important}
+  #boot,#demoBar,.footnote,.actions,.jobbar,#viewExport,#viewStaff{display:none !important}
   body.jobbar-on{padding-bottom:0}
 
   body{background:#fff;padding:0}
@@ -931,9 +931,12 @@ table.pv td.st i.pend{
 </head>
 <body>
 
-<div class="shell">
-
-  <div class="topbar">
+<!-- 画面の切り替え。
+     本文(.shell)の外に置いてあります。中に入れると、記録簿や確定簿を
+     出しているとき .shell が短くなり、少しスクロールしただけで
+     バーごと消えてしまうためです。ここなら常に上に貼り付いたままです。 -->
+<div class="topbar">
+  <div class="tb-in">
     <div class="brand">
       <b id="brandName">くるむ薬局</b>
       <span>業務日報</span>
@@ -966,7 +969,7 @@ table.pv td.st i.pend{
         <span class="cap">出力</span>
       </button>
       <span class="navsep"></span>
-      <button class="navcircle" id="btnAdmin" title="担当者の管理">
+      <button class="navcircle" id="btnAdmin" aria-pressed="false" title="名簿と管理薬剤師">
         <span class="ring"><svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="9" cy="8" r="3.2"/>
           <path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/>
@@ -976,6 +979,9 @@ table.pv td.st i.pend{
       </button>
     </nav>
   </div>
+</div>
+
+<div class="shell">
 
   <div id="demoBar" class="demo" hidden>
     プレビュー表示中です。保存や名簿の変更はこの画面の中だけで、シートには書き込まれません。
@@ -1146,12 +1152,11 @@ table.pv td.st i.pend{
   </div>
 </div>
 
-<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
-  <div class="sheet">
-    <div class="sheet-hd">
-      <h2 id="sheetTitle">名簿と管理薬剤師</h2>
-      <button class="mini" id="sheetClose">閉じる</button>
-    </div>
+<section class="lgview narrow" id="viewStaff" hidden>
+  <div class="lg-bar">
+    <div class="ttl"><b>名簿と管理薬剤師</b><span>担当者の登録と、任期の管理</span></div>
+  </div>
+  <div class="card">
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" data-tab="staff"  aria-selected="true">担当者</button>
       <button class="tab" role="tab" data-tab="chief"  aria-selected="false">管理薬剤師</button>
@@ -1159,7 +1164,7 @@ table.pv td.st i.pend{
     </div>
     <div class="sheet-bd" id="sheetBody"></div>
   </div>
-</div>
+</section>
 
 <!-- 確定の進み具合。画面下に固定して、どの画面にいても見えるようにする -->
 <div class="jobbar" id="jobBar" hidden role="status" aria-live="polite">
@@ -1240,7 +1245,8 @@ function fail(e){ toast((e && e.message) || 'サーバーとの通信に失敗�
 var VIEWS = {
   input:  { el:'main',       btn:'navInput'  },
   ledger: { el:'ledger',     btn:'navLedger' },
-  export: { el:'viewExport', btn:'navExport' }
+  export: { el:'viewExport', btn:'navExport' },
+  staff:  { el:'viewStaff',  btn:'btnAdmin'  }
 };
 var VIEW = '';
 
@@ -1249,6 +1255,16 @@ function showView(name){
   if (!canLeaveView_(VIEW)) return;
   setView_(name);
 }
+
+/* 記録簿や名簿の中のバーは、トップバーの真下に貼り付けたい。
+   高さは書体や画面幅で変わるので、決め打ちにせず測って渡す。 */
+function syncTopbarHeight_(){
+  var bar = document.querySelector('.topbar');
+  if (!bar) return;
+  var h = bar.offsetHeight;
+  if (h) document.documentElement.style.setProperty('--tbh', h + 'px');
+}
+window.addEventListener('resize', syncTopbarHeight_);
 
 function setView_(name){
   var prev = VIEW;
@@ -1259,6 +1275,7 @@ function setView_(name){
       .setAttribute('aria-pressed', k === name ? 'true' : 'false');
   });
   window.scrollTo(0, 0);
+  syncTopbarHeight_();
   enterView_(name, prev);
 }
 
@@ -1294,6 +1311,8 @@ function enterView_(name, prev){
     lgOpen();
   } else if (name === 'export'){
     openFix();
+  } else if (name === 'staff'){
+    loadMaster();
   }
   lgBar();
 }
@@ -1312,6 +1331,7 @@ function boot(){
     renderIdentity();
     apply(d);
     document.getElementById('boot').hidden = true;
+    syncTopbarHeight_();
     setView_('input');
     scanMissing();
   });
@@ -1955,14 +1975,7 @@ window.addEventListener('beforeunload', function(e){
    名簿と管理薬剤師の管理
    ============================================================ */
 var A = { master:null, tab:'staff' };
-var $overlay = document.getElementById('overlay');
 
-document.getElementById('btnAdmin').addEventListener('click', openAdmin);
-document.getElementById('sheetClose').addEventListener('click', closeAdmin);
-$overlay.addEventListener('click', function(e){ if (e.target === this) closeAdmin(); });
-document.addEventListener('keydown', function(e){
-  if (e.key === 'Escape' && $overlay.classList.contains('open')) closeAdmin();
-});
 Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(btn){
   btn.addEventListener('click', function(){
     A.tab = btn.getAttribute('data-tab');
@@ -1973,8 +1986,6 @@ Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(btn){
   });
 });
 
-function openAdmin(){ $overlay.classList.add('open'); loadMaster(); }
-function closeAdmin(){ $overlay.classList.remove('open'); }
 function sheet(html){ document.getElementById('sheetBody').innerHTML = html; }
 
 function loadMaster(){
@@ -3409,6 +3420,7 @@ function lgRender(){
 document.getElementById('navInput').addEventListener('click', function(){ showView('input'); });
 document.getElementById('navLedger').addEventListener('click', function(){ showView('ledger'); });
 document.getElementById('navExport').addEventListener('click', function(){ showView('export'); });
+document.getElementById('btnAdmin').addEventListener('click', function(){ showView('staff'); });
 document.getElementById('lgPaper').addEventListener('click', lgPaper);
 document.getElementById('lgFix').addEventListener('click', lgFreeze);
 document.getElementById('lgPrev').addEventListener('click', function(){ lgNav(LG.data && LG.data.prevMonth); });
