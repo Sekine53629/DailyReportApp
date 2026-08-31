@@ -2242,7 +2242,7 @@ function daysSince(iso){
 /* ============================================================
    帳票の出力
    ============================================================ */
-var P = { from:'', to:'', preview:null, job:null, busy:false };
+var P = { from:'', to:'', preview:null, job:null, busy:false, stale:false };
 
 /* 表示・非表示は画面切り替え(showView)が持つので、ここでは中身だけ用意します */
 function openPrint(){
@@ -2277,10 +2277,11 @@ function renderPrint(){
     +   '<input type="date" id="pvFrom" value="' + P.from + '">'
     +   '<span class="tilde">〜</span>'
     +   '<input type="date" id="pvTo" value="' + P.to + '">'
+    +   '<button class="mini" id="pvShow" title="この期間で見え方を作り直します">表示</button>'
     + '</div>';
 
   var weeks = weekCount_(P.from, P.to);
-  h += '<p class="pvnote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
+  h += '<p class="pvnote" id="pvNote">' + weeks + ' 週分 = ' + weeks + ' ページを出力します。'
      + '下は ' + jp(d.start) + ' 〜 ' + jp(d.end) + ' の週の見え方です。</p>';
 
   h += '<div class="pvwrap" id="pvWrap">' + printTable_(d) + '</div>'
@@ -2397,19 +2398,31 @@ function wirePrint_(){
     b.addEventListener('click', function(){
       applyPreset_(b.getAttribute('data-preset'));
       P.job = null;
+      P.stale = false;      // 開始日と最終日が一度に決まるので、そのまま作り直す
       loadPreview();
     });
   });
+  // 日付を選ぶたびに作り直すと、開始日を選んだ時点でも一度生成してしまう。
+  // ここでは値を控えるだけにして、「表示」を押されたときに作り直す。
   ['pvFrom','pvTo'].forEach(function(id){
     var el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('change', function(){
       P.from = document.getElementById('pvFrom').value;
       P.to   = document.getElementById('pvTo').value;
-      if (P.from && P.to && P.from > P.to){ P.to = P.from; }
+      if (P.from && P.to && P.from > P.to){
+        P.to = P.from;
+        document.getElementById('pvTo').value = P.to;
+      }
       P.job = null;
-      loadPreview();
+      pvRangeChanged_();
     });
+  });
+  var show = document.getElementById('pvShow');
+  if (show) show.addEventListener('click', function(){
+    if (!P.from || !P.to){ toast('開始日と最終日を選んでください', true); return; }
+    P.stale = false;
+    loadPreview();
   });
   var paper = document.getElementById('pvPaper');
   if (paper) paper.addEventListener('click', function(){
@@ -2422,6 +2435,30 @@ function wirePrint_(){
   if (cx) cx.addEventListener('click', function(){
     call('cancelExport', [], function(){ P.job = null; loadPreview(); toast('中止しました'); });
   });
+}
+
+/* 期間を変えたときは、週数の表示だけを更新する。
+   見え方の作り直し(サーバー往復)は「表示」を押されるまで待つ。 */
+function pvRangeChanged_(){
+  P.stale = true;
+  var ok   = !!(P.from && P.to);
+  var note = document.getElementById('pvNote');
+  var show = document.getElementById('pvShow');
+  var go   = document.getElementById('pvGo');
+
+  if (show){ show.disabled = !ok; show.classList.toggle('on', ok); }
+  if (go) go.disabled = !ok;
+  if (!note) return;
+
+  if (!ok){
+    note.textContent = '開始日と最終日を選んでください。';
+    return;
+  }
+  var weeks = weekCount_(P.from, P.to);
+  note.innerHTML = jp(P.from) + ' 〜 ' + jp(P.to) + ' ＝ ' + weeks + ' 週分 / '
+    + weeks + ' ページ。'
+    + '<b style="display:inline">［表示］を押すと、この期間の見え方を作り直します。</b>'
+    + '（出力は押さなくても、この期間で行われます）';
 }
 
 function applyPreset_(key){
@@ -2574,6 +2611,7 @@ function updateProgress_(job){
 /* 出力。6分の上限があるので、終わるまで小分けに呼び続ける */
 function startPrint_(){
   if (P.busy) return;
+  if (!P.from || !P.to){ toast('開始日と最終日を選んでください', true); return; }
   var weeks = weekCount_(P.from, P.to);
   if (!confirm(jp(P.from) + ' 〜 ' + jp(P.to) + ' の ' + weeks + ' 週分を出力します。\nよろしいですか？')) return;
 
